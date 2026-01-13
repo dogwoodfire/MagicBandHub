@@ -1,0 +1,9 @@
+SET(SOURCES ui_Scanner.c
+    ui_Screen2.c
+    ui.c
+    ui_comp_hook.c
+    ui_helpers.c
+    ui_img_mickey_png.c
+    fonts/ui_font_Monsterat38withSymbols.c)
+
+add_library(ui ${SOURCES})
