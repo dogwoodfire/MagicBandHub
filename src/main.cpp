@@ -9,6 +9,8 @@
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
+#include <ESPmDNS.h>
+#include "web_portal.h"
 
 // --- Hardware Pins ---
 #define LED_PIN 21
@@ -25,11 +27,6 @@
 AsyncWebServer server(80);
 bool isWiFiActive = false;
 
-struct BandRecord {
-    uint8_t uid[7];
-    uint32_t color;
-    char name[20];
-};
 
 BandRecord registeredBands[10];
 int bandCount = 0;
@@ -180,17 +177,17 @@ extern "C" {
     void fn_toggle_wifi(lv_event_t * e) {
         if (!isWiFiActive) {
             WiFi.softAP("MagicBand-Hub", "password123");
-            server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-                request->send(200, "text/html", "<h1>Hub Online</h1><p>Band management dashboard goes here.</p>");
-            });
-            server.begin();
+            if (MDNS.begin("magicband")) {
+                Serial.println("mDNS: Responder started at http://magicband.local");
+            }
+            startWebServer(); 
             isWiFiActive = true;
-            Serial.println("WiFi Hotspot Started");
+            Serial.println("HOTSPOT: Active at http://magicband.local");
         } else {
-            server.end();
+            // Use the new modular stop function
+            stopWebServer();
             WiFi.softAPdisconnect(true);
             isWiFiActive = false;
-            Serial.println("WiFi Hotspot Stopped");
         }
     }
 }
@@ -229,17 +226,27 @@ void setup() {
     const esp_timer_create_args_t ta = { .callback = [](void* arg){ lv_tick_inc(2); }, .name="t" };
     esp_timer_handle_t th; esp_timer_create(&ta, &th); esp_timer_start_periodic(th, 2000);
 
+    
     ui_init(); //
 
     lv_obj_add_event_cb(ui_RecordScreen, [](lv_event_t * e){
         if(lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) reset_record_panels();
     }, LV_EVENT_SCREEN_LOADED, NULL);
 
+    initWebServer();
+
     Serial.println("--- SYSTEM READY ---");
 }
 
 void loop() {
     lv_timer_handler(); 
+
+    // Check if we need to refresh the UI if names were changed via Web
+    static int lastKnownBandCount = 0;
+    if (bandCount != lastKnownBandCount) {
+        fn_refresh_roller(NULL); // Call the SquareLine refresh function
+        lastKnownBandCount = bandCount;
+    }
     static uint32_t lastScan = 0;
     if (millis() - lastScan > 300) {
         lastScan = millis();
