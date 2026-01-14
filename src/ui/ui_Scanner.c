@@ -14,7 +14,7 @@ void ui_event_Scanner( lv_event_t * e) {
 
 if ( event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_LEFT  ) {
 lv_indev_wait_release(lv_indev_get_act());
-      _ui_screen_change( &ui_Screen2, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_Screen2_screen_init);
+      _ui_screen_change( &ui_RecordScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_RecordScreen_screen_init);
 }
 }
 

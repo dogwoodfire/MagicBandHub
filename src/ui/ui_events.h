@@ -10,6 +10,12 @@
 extern "C" {
 #endif
 
+void fn_start_registration(lv_event_t * e);
+void fn_save_band(lv_event_t * e);
+void fn_prepare_edit_panel(lv_event_t * e);
+void fn_delete_selected_band(lv_event_t * e);
+void fn_toggle_wifi(lv_event_t * e);
+
 #ifdef __cplusplus
 } /*extern "C"*/
 #endif

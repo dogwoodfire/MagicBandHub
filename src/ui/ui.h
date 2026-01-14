@@ -27,7 +27,9 @@ extern "C" {
 
 ///////////////////// SCREENS ////////////////////
 #include "ui_Scanner.h"
-#include "ui_Screen2.h"
+#include "ui_RecordScreen.h"
+#include "ui_ManageBands.h"
+#include "ui_Hotspot.h"
 
 ///////////////////// VARIABLES ////////////////////
 
