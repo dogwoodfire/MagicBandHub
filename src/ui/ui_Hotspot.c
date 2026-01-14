@@ -5,8 +5,9 @@
 
 #include "ui.h"
 
+lv_obj_t *uic_StatusLabel;
 lv_obj_t *uic_Hotspot;
-lv_obj_t *ui_Hotspot = NULL;lv_obj_t *ui_HotspotToggle = NULL;lv_obj_t *ui_Label9 = NULL;
+lv_obj_t *ui_Hotspot = NULL;lv_obj_t *ui_HotspotToggle = NULL;lv_obj_t *ui_Label9 = NULL;lv_obj_t *ui_StatusLabel = NULL;
 // event funtions
 void ui_event_Hotspot( lv_event_t * e) {
     lv_event_code_t event_code = lv_event_get_code(e);
@@ -49,9 +50,18 @@ lv_obj_set_height( ui_Label9, LV_SIZE_CONTENT);   /// 1
 lv_obj_set_align( ui_Label9, LV_ALIGN_CENTER );
 lv_label_set_text(ui_Label9,"Toggle Wifi");
 
+ui_StatusLabel = lv_label_create(ui_Hotspot);
+lv_obj_set_width( ui_StatusLabel, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_StatusLabel, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_x( ui_StatusLabel, -2 );
+lv_obj_set_y( ui_StatusLabel, -52 );
+lv_obj_set_align( ui_StatusLabel, LV_ALIGN_CENTER );
+lv_label_set_text(ui_StatusLabel,"Tap Bellow to Set Up Wifi");
+
 lv_obj_add_event_cb(ui_HotspotToggle, ui_event_HotspotToggle, LV_EVENT_ALL, NULL);
 lv_obj_add_event_cb(ui_Hotspot, ui_event_Hotspot, LV_EVENT_ALL, NULL);
 uic_Hotspot = ui_Hotspot;
+uic_StatusLabel = ui_StatusLabel;
 
 }
 
@@ -64,5 +74,7 @@ uic_Hotspot= NULL;
 ui_Hotspot= NULL;
 ui_HotspotToggle= NULL;
 ui_Label9= NULL;
+uic_StatusLabel= NULL;
+ui_StatusLabel= NULL;
 
 }

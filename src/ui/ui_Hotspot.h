@@ -18,8 +18,10 @@ extern lv_obj_t *ui_Hotspot;
 extern void ui_event_HotspotToggle( lv_event_t * e);
 extern lv_obj_t *ui_HotspotToggle;
 extern lv_obj_t *ui_Label9;
+extern lv_obj_t *ui_StatusLabel;
 // CUSTOM VARIABLES
 extern lv_obj_t *uic_Hotspot;
+extern lv_obj_t *uic_StatusLabel;
 
 #ifdef __cplusplus
 } /*extern "C"*/

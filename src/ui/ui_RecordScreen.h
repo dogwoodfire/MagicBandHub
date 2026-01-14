@@ -20,23 +20,18 @@ extern void ui_event_ScanBandBtn( lv_event_t * e);
 extern lv_obj_t *ui_ScanBandBtn;
 extern lv_obj_t *ui_Label2;
 extern lv_obj_t *ui_ScanBandPnl2;
-extern lv_obj_t *ui_Colorwheel2;
-extern void ui_event_Button2( lv_event_t * e);
-extern lv_obj_t *ui_Button2;
-extern lv_obj_t *ui_Label3;
+extern lv_obj_t *ui_Label11;
 extern lv_obj_t *ui_ScanBandPnl3;
-extern lv_obj_t *ui_BandNameTextArea;
-extern lv_obj_t *ui_Keyboard1;
 extern void ui_event_SaveNewBand( lv_event_t * e);
 extern lv_obj_t *ui_SaveNewBand;
 extern lv_obj_t *ui_Label4;
+extern lv_obj_t *ui_Label12;
 // CUSTOM VARIABLES
 extern lv_obj_t *uic_RecordScreen;
 extern lv_obj_t *uic_ScanBandPnl1;
 extern lv_obj_t *uic_ScanBandBtn;
 extern lv_obj_t *uic_ScanBandPnl2;
 extern lv_obj_t *uic_ScanBandPnl3;
-extern lv_obj_t *uic_BandNameTextArea;
 extern lv_obj_t *uic_SaveNewBand;
 
 #ifdef __cplusplus

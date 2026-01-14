@@ -6,13 +6,12 @@
 #include "ui.h"
 
 lv_obj_t *uic_SaveNewBand;
-lv_obj_t *uic_BandNameTextArea;
 lv_obj_t *uic_ScanBandPnl3;
 lv_obj_t *uic_ScanBandPnl2;
 lv_obj_t *uic_ScanBandBtn;
 lv_obj_t *uic_ScanBandPnl1;
 lv_obj_t *uic_RecordScreen;
-lv_obj_t *ui_RecordScreen = NULL;lv_obj_t *ui_ScanBandPnl1 = NULL;lv_obj_t *ui_ScanBandBtn = NULL;lv_obj_t *ui_Label2 = NULL;lv_obj_t *ui_ScanBandPnl2 = NULL;lv_obj_t *ui_Colorwheel2 = NULL;lv_obj_t *ui_Button2 = NULL;lv_obj_t *ui_Label3 = NULL;lv_obj_t *ui_ScanBandPnl3 = NULL;lv_obj_t *ui_BandNameTextArea = NULL;lv_obj_t *ui_Keyboard1 = NULL;lv_obj_t *ui_SaveNewBand = NULL;lv_obj_t *ui_Label4 = NULL;
+lv_obj_t *ui_RecordScreen = NULL;lv_obj_t *ui_ScanBandPnl1 = NULL;lv_obj_t *ui_ScanBandBtn = NULL;lv_obj_t *ui_Label2 = NULL;lv_obj_t *ui_ScanBandPnl2 = NULL;lv_obj_t *ui_Label11 = NULL;lv_obj_t *ui_ScanBandPnl3 = NULL;lv_obj_t *ui_SaveNewBand = NULL;lv_obj_t *ui_Label4 = NULL;lv_obj_t *ui_Label12 = NULL;
 // event funtions
 void ui_event_RecordScreen( lv_event_t * e) {
     lv_event_code_t event_code = lv_event_get_code(e);
@@ -32,15 +31,6 @@ void ui_event_ScanBandBtn( lv_event_t * e) {
 
 if ( event_code == LV_EVENT_PRESSED) {
       fn_start_registration( e );
-}
-}
-
-void ui_event_Button2( lv_event_t * e) {
-    lv_event_code_t event_code = lv_event_get_code(e);
-
-if ( event_code == LV_EVENT_CLICKED) {
-      _ui_flag_modify( ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_ADD);
-      _ui_flag_modify( ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_REMOVE);
 }
 }
 
@@ -67,8 +57,8 @@ lv_obj_add_flag( ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN );   /// Flags
 lv_obj_clear_flag( ui_ScanBandPnl1, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
 
 ui_ScanBandBtn = lv_btn_create(ui_ScanBandPnl1);
-lv_obj_set_width( ui_ScanBandBtn, 100);
-lv_obj_set_height( ui_ScanBandBtn, 50);
+lv_obj_set_width( ui_ScanBandBtn, 162);
+lv_obj_set_height( ui_ScanBandBtn, 96);
 lv_obj_set_x( ui_ScanBandBtn, 1 );
 lv_obj_set_y( ui_ScanBandBtn, 0 );
 lv_obj_set_align( ui_ScanBandBtn, LV_ALIGN_CENTER );
@@ -79,7 +69,7 @@ ui_Label2 = lv_label_create(ui_ScanBandBtn);
 lv_obj_set_width( ui_Label2, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_height( ui_Label2, LV_SIZE_CONTENT);   /// 1
 lv_obj_set_align( ui_Label2, LV_ALIGN_CENTER );
-lv_label_set_text(ui_Label2,"RECORD\nBAND");
+lv_label_set_text(ui_Label2,"REGISTER BAND");
 lv_obj_set_style_text_align(ui_Label2, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_ScanBandPnl2 = lv_obj_create(ui_RecordScreen);
@@ -89,27 +79,11 @@ lv_obj_set_align( ui_ScanBandPnl2, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN );   /// Flags
 lv_obj_clear_flag( ui_ScanBandPnl2, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
 
-ui_Colorwheel2 = lv_colorwheel_create(ui_ScanBandPnl2,true);
-lv_obj_set_width( ui_Colorwheel2, 100);
-lv_obj_set_height( ui_Colorwheel2, 100);
-lv_obj_set_x( ui_Colorwheel2, -2 );
-lv_obj_set_y( ui_Colorwheel2, -34 );
-lv_obj_set_align( ui_Colorwheel2, LV_ALIGN_CENTER );
-
-ui_Button2 = lv_btn_create(ui_ScanBandPnl2);
-lv_obj_set_width( ui_Button2, 100);
-lv_obj_set_height( ui_Button2, 50);
-lv_obj_set_x( ui_Button2, 3 );
-lv_obj_set_y( ui_Button2, 78 );
-lv_obj_set_align( ui_Button2, LV_ALIGN_CENTER );
-lv_obj_add_flag( ui_Button2, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
-lv_obj_clear_flag( ui_Button2, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
-
-ui_Label3 = lv_label_create(ui_Button2);
-lv_obj_set_width( ui_Label3, LV_SIZE_CONTENT);  /// 1
-lv_obj_set_height( ui_Label3, LV_SIZE_CONTENT);   /// 1
-lv_obj_set_align( ui_Label3, LV_ALIGN_CENTER );
-lv_label_set_text(ui_Label3,"Save");
+ui_Label11 = lv_label_create(ui_ScanBandPnl2);
+lv_obj_set_width( ui_Label11, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_Label11, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_align( ui_Label11, LV_ALIGN_CENTER );
+lv_label_set_text(ui_Label11,"Tap band to reader...");
 
 ui_ScanBandPnl3 = lv_obj_create(ui_RecordScreen);
 lv_obj_set_width( ui_ScanBandPnl3, 240);
@@ -117,26 +91,11 @@ lv_obj_set_height( ui_ScanBandPnl3, 240);
 lv_obj_set_align( ui_ScanBandPnl3, LV_ALIGN_CENTER );
 lv_obj_clear_flag( ui_ScanBandPnl3, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
 
-ui_BandNameTextArea = lv_textarea_create(ui_ScanBandPnl3);
-lv_obj_set_width( ui_BandNameTextArea, 150);
-lv_obj_set_height( ui_BandNameTextArea, 36);
-lv_obj_set_x( ui_BandNameTextArea, 0 );
-lv_obj_set_y( ui_BandNameTextArea, -73 );
-lv_obj_set_align( ui_BandNameTextArea, LV_ALIGN_CENTER );
-lv_textarea_set_placeholder_text(ui_BandNameTextArea,"Placeholder...");
-
-ui_Keyboard1 = lv_keyboard_create(ui_ScanBandPnl3);
-lv_obj_set_width( ui_Keyboard1, 300);
-lv_obj_set_height( ui_Keyboard1, 120);
-lv_obj_set_x( ui_Keyboard1, 5 );
-lv_obj_set_y( ui_Keyboard1, 14 );
-lv_obj_set_align( ui_Keyboard1, LV_ALIGN_CENTER );
-
 ui_SaveNewBand = lv_btn_create(ui_ScanBandPnl3);
 lv_obj_set_width( ui_SaveNewBand, 100);
-lv_obj_set_height( ui_SaveNewBand, 26);
-lv_obj_set_x( ui_SaveNewBand, 0 );
-lv_obj_set_y( ui_SaveNewBand, 99 );
+lv_obj_set_height( ui_SaveNewBand, 58);
+lv_obj_set_x( ui_SaveNewBand, -1 );
+lv_obj_set_y( ui_SaveNewBand, 69 );
 lv_obj_set_align( ui_SaveNewBand, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_SaveNewBand, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
 lv_obj_clear_flag( ui_SaveNewBand, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
@@ -147,9 +106,15 @@ lv_obj_set_height( ui_Label4, LV_SIZE_CONTENT);   /// 1
 lv_obj_set_align( ui_Label4, LV_ALIGN_CENTER );
 lv_label_set_text(ui_Label4,"SAVE");
 
+ui_Label12 = lv_label_create(ui_ScanBandPnl3);
+lv_obj_set_width( ui_Label12, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_Label12, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_x( ui_Label12, -2 );
+lv_obj_set_y( ui_Label12, -1 );
+lv_obj_set_align( ui_Label12, LV_ALIGN_CENTER );
+lv_label_set_text(ui_Label12,"Band Registered!");
+
 lv_obj_add_event_cb(ui_ScanBandBtn, ui_event_ScanBandBtn, LV_EVENT_ALL, NULL);
-lv_obj_add_event_cb(ui_Button2, ui_event_Button2, LV_EVENT_ALL, NULL);
-lv_keyboard_set_textarea(ui_Keyboard1,ui_BandNameTextArea);
 lv_obj_add_event_cb(ui_SaveNewBand, ui_event_SaveNewBand, LV_EVENT_ALL, NULL);
 lv_obj_add_event_cb(ui_RecordScreen, ui_event_RecordScreen, LV_EVENT_ALL, NULL);
 uic_RecordScreen = ui_RecordScreen;
@@ -157,7 +122,6 @@ uic_ScanBandPnl1 = ui_ScanBandPnl1;
 uic_ScanBandBtn = ui_ScanBandBtn;
 uic_ScanBandPnl2 = ui_ScanBandPnl2;
 uic_ScanBandPnl3 = ui_ScanBandPnl3;
-uic_BandNameTextArea = ui_BandNameTextArea;
 uic_SaveNewBand = ui_SaveNewBand;
 
 }
@@ -176,16 +140,12 @@ ui_ScanBandBtn= NULL;
 ui_Label2= NULL;
 uic_ScanBandPnl2= NULL;
 ui_ScanBandPnl2= NULL;
-ui_Colorwheel2= NULL;
-ui_Button2= NULL;
-ui_Label3= NULL;
+ui_Label11= NULL;
 uic_ScanBandPnl3= NULL;
 ui_ScanBandPnl3= NULL;
-uic_BandNameTextArea= NULL;
-ui_BandNameTextArea= NULL;
-ui_Keyboard1= NULL;
 uic_SaveNewBand= NULL;
 ui_SaveNewBand= NULL;
 ui_Label4= NULL;
+ui_Label12= NULL;
 
 }

@@ -4,12 +4,12 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 
-// Shared struct
+// Shared structure - 131 bytes total
 struct BandRecord {
-    uint8_t uid[7];
-    uint32_t color;
-    char name[20];
-    char imageUrl[100]; // New field for the image link
+    uint8_t uid[7];    // Chip serial number
+    uint32_t color;    // LED ring color
+    char name[20];      // Nickname
+    char imageUrl[100]; // Remote image link
 };
 
 #ifdef __cplusplus
@@ -19,6 +19,7 @@ extern "C" {
 void initWebServer();
 void startWebServer();
 void stopWebServer();
+bool tryConnectSavedWiFi(); // Connection manager
 
 #ifdef __cplusplus
 }
