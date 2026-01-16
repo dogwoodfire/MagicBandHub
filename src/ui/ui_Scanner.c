@@ -5,9 +5,12 @@
 
 #include "ui.h"
 
+lv_obj_t *uic_NewBandCancel;
+lv_obj_t *uic_NewBandConfirm;
+lv_obj_t *uic_RegisterConfirmPnl;
 lv_obj_t *uic_mickeyScanner;
 lv_obj_t *uic_Scanner;
-lv_obj_t *ui_Scanner = NULL;lv_obj_t *ui_mickeyScanner = NULL;
+lv_obj_t *ui_Scanner = NULL;lv_obj_t *ui_mickeyScanner = NULL;lv_obj_t *ui_RegisterConfirmPnl = NULL;lv_obj_t *ui_Label13 = NULL;lv_obj_t *ui_NewBandConfirm = NULL;lv_obj_t *ui_Label14 = NULL;lv_obj_t *ui_NewBandCancel = NULL;lv_obj_t *ui_Label15 = NULL;
 // event funtions
 void ui_event_Scanner( lv_event_t * e) {
     lv_event_code_t event_code = lv_event_get_code(e);
@@ -15,6 +18,14 @@ void ui_event_Scanner( lv_event_t * e) {
 if ( event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_LEFT  ) {
 lv_indev_wait_release(lv_indev_get_act());
       _ui_screen_change( &ui_RecordScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_RecordScreen_screen_init);
+}
+}
+
+void ui_event_NewBandCancel( lv_event_t * e) {
+    lv_event_code_t event_code = lv_event_get_code(e);
+
+if ( event_code == LV_EVENT_CLICKED) {
+      _ui_flag_modify( ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_ADD);
 }
 }
 
@@ -35,9 +46,58 @@ lv_obj_set_align( ui_mickeyScanner, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_mickeyScanner, LV_OBJ_FLAG_ADV_HITTEST );   /// Flags
 lv_obj_clear_flag( ui_mickeyScanner, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
 
+ui_RegisterConfirmPnl = lv_obj_create(ui_Scanner);
+lv_obj_set_width( ui_RegisterConfirmPnl, 240);
+lv_obj_set_height( ui_RegisterConfirmPnl, 240);
+lv_obj_set_align( ui_RegisterConfirmPnl, LV_ALIGN_CENTER );
+lv_obj_add_flag( ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN );   /// Flags
+lv_obj_clear_flag( ui_RegisterConfirmPnl, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+
+ui_Label13 = lv_label_create(ui_RegisterConfirmPnl);
+lv_obj_set_width( ui_Label13, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_Label13, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_x( ui_Label13, -2 );
+lv_obj_set_y( ui_Label13, -22 );
+lv_obj_set_align( ui_Label13, LV_ALIGN_CENTER );
+lv_label_set_text(ui_Label13,"New Band Found! Register it?");
+
+ui_NewBandConfirm = lv_btn_create(ui_RegisterConfirmPnl);
+lv_obj_set_width( ui_NewBandConfirm, 100);
+lv_obj_set_height( ui_NewBandConfirm, 50);
+lv_obj_set_x( ui_NewBandConfirm, 1 );
+lv_obj_set_y( ui_NewBandConfirm, 18 );
+lv_obj_set_align( ui_NewBandConfirm, LV_ALIGN_CENTER );
+lv_obj_add_flag( ui_NewBandConfirm, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
+lv_obj_clear_flag( ui_NewBandConfirm, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+
+ui_Label14 = lv_label_create(ui_NewBandConfirm);
+lv_obj_set_width( ui_Label14, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_Label14, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_align( ui_Label14, LV_ALIGN_CENTER );
+lv_label_set_text(ui_Label14,"Register");
+
+ui_NewBandCancel = lv_btn_create(ui_RegisterConfirmPnl);
+lv_obj_set_width( ui_NewBandCancel, 100);
+lv_obj_set_height( ui_NewBandCancel, 50);
+lv_obj_set_x( ui_NewBandCancel, 3 );
+lv_obj_set_y( ui_NewBandCancel, 79 );
+lv_obj_set_align( ui_NewBandCancel, LV_ALIGN_CENTER );
+lv_obj_add_flag( ui_NewBandCancel, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
+lv_obj_clear_flag( ui_NewBandCancel, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+
+ui_Label15 = lv_label_create(ui_NewBandCancel);
+lv_obj_set_width( ui_Label15, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_Label15, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_align( ui_Label15, LV_ALIGN_CENTER );
+lv_label_set_text(ui_Label15,"Ignore");
+
+lv_obj_add_event_cb(ui_NewBandCancel, ui_event_NewBandCancel, LV_EVENT_ALL, NULL);
 lv_obj_add_event_cb(ui_Scanner, ui_event_Scanner, LV_EVENT_ALL, NULL);
 uic_Scanner = ui_Scanner;
 uic_mickeyScanner = ui_mickeyScanner;
+uic_RegisterConfirmPnl = ui_RegisterConfirmPnl;
+uic_NewBandConfirm = ui_NewBandConfirm;
+uic_NewBandCancel = ui_NewBandCancel;
 
 }
 
@@ -50,5 +110,14 @@ uic_Scanner= NULL;
 ui_Scanner= NULL;
 uic_mickeyScanner= NULL;
 ui_mickeyScanner= NULL;
+uic_RegisterConfirmPnl= NULL;
+ui_RegisterConfirmPnl= NULL;
+ui_Label13= NULL;
+uic_NewBandConfirm= NULL;
+ui_NewBandConfirm= NULL;
+ui_Label14= NULL;
+uic_NewBandCancel= NULL;
+ui_NewBandCancel= NULL;
+ui_Label15= NULL;
 
 }

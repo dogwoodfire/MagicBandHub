@@ -12,7 +12,14 @@
 #include <ESPmDNS.h>
 #include "web_portal.h"
 
-// --- Hardware Pins ---
+// --- Animation Speed Variables (Increase to SLOW DOWN) ---
+#define SPEED_COMET 30       
+#define SPEED_FILL  45       
+#define SPEED_PULSE 15       
+#define SPEED_DISCOVERY 45   
+#define SPEED_MANUAL 60      
+
+// Hardware Config
 #define LED_PIN 21
 #define LED_COUNT 12
 #define TFT_BL 2 
@@ -24,37 +31,25 @@
 #define NFC_IRQ 17
 #define LCD_RST 14
 
-AsyncWebServer server(80);
-bool isWiFiActive = false;
-
-
-BandRecord registeredBands[10];
-int bandCount = 0;
-BandRecord tempRecord; 
-bool isWaitingForUID = false;
-bool isSuccessActive = false;
-
+AsyncWebServer server(80); 
 TFT_eSPI tft = TFT_eSPI(240, 240); 
 TwoWire I2C_NFC = TwoWire(1); 
 Adafruit_PN532 nfc(NFC_IRQ, LCD_RST, &I2C_NFC); 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 Preferences prefs;
 
-// SquareLine Externs - Verified names
+BandRecord registeredBands[10];
+int bandCount = 0;
+BandRecord tempRecord; 
+bool isWaitingForUID = false;
+bool isSuccessActive = false;
+bool isWiFiActive = false;
+
 extern "C" {
-    extern lv_obj_t * ui_Scanner;
-    extern lv_obj_t * ui_mickeyScanner;
-    extern lv_obj_t * ui_RecordScreen;
-    extern lv_obj_t * ui_ScanBandPnl1;
-    extern lv_obj_t * ui_ScanBandPnl2;
-    extern lv_obj_t * ui_ScanBandPnl3;
-    extern lv_obj_t * ui_Colorwheel2;
-    extern lv_obj_t * ui_BandNameTextArea;
-    extern lv_obj_t * ui_EditNameLabel;
-    extern lv_obj_t * ui_BandRoller;
+    extern lv_obj_t * ui_Scanner, * ui_mickeyScanner, * ui_RecordScreen, * ui_ScanBandPnl1, * ui_ScanBandPnl2, * ui_ScanBandPnl3, * ui_BandRoller, * ui_RegisterConfirmPnl, * ui_NewBandConfirm, * ui_StatusLabel, * ui_EditNameLabel;
 }
 
-// --- Display & Touch Handlers ---
+// Display/Touch Drivers
 void my_disp_flush(lv_disp_drv_t* d, const lv_area_t* a, lv_color_t* c) {
     uint32_t w=(a->x2-a->x1+1), h=(a->y2-a->y1+1);
     tft.startWrite(); tft.setAddrWindow(a->x1,a->y1,w,h);
@@ -79,21 +74,18 @@ void my_touchpad_read(lv_indev_drv_t* d, lv_indev_data_t* data) {
     else data->state=LV_INDEV_STATE_REL;
 }
 
-
-// --- Global Animation Helper ---
-void runWhiteSwirl() {
+void runWhiteSwirl(int speed) {
     static uint8_t swirlPos = 0;
     strip.clear();
     for(int i=0; i<5; i++) {
         int p = (swirlPos - i + LED_COUNT) % LED_COUNT;
         int b = 255 - (i * 50); if(b < 0) b = 0;
-        strip.setPixelColor(p, strip.Color(b, b, b)); // Pure white tail
+        strip.setPixelColor(p, strip.Color(b, b, b)); 
     }
     strip.show();
     swirlPos = (swirlPos + 1) % LED_COUNT;
 }
 
-// --- Animation: Strictly White Spin -> Strictly White Expansion -> Custom Color Pulse ---
 void handleSuccess(uint32_t color) {
     if(isSuccessActive) return;
     isSuccessActive = true;
@@ -101,29 +93,26 @@ void handleSuccess(uint32_t color) {
         lv_obj_set_style_img_recolor(ui_mickeyScanner, lv_color_hex(color), 0);
         lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 255, 0);
     }
-    const int D = 25; 
-    for(int f=0; f<LED_COUNT; f++){
+    // STAGE 1: White Comet Swirl (1 rotation)
+    for(int f=0; f < LED_COUNT; f++){
         strip.clear();
         for(int i=0; i<5; i++){
             int p=(f-i+LED_COUNT)%LED_COUNT;
             int b=255-(i*50); if(b<0) b=0;
             strip.setPixelColor(p, strip.Color(b, b, b)); 
         }
-        strip.show(); delay(D); lv_timer_handler();
+        strip.show(); delay(SPEED_COMET); lv_timer_handler();
     }
-    for(int i=0; i<LED_COUNT; i++){ 
+    // STAGE 2: Progressive Fill (White, 1 to 12)
+    strip.clear();
+    for(int i=0; i < LED_COUNT; i++) {
         strip.setPixelColor(i, strip.Color(255, 255, 255));
-        strip.show(); delay(D); lv_timer_handler(); 
+        strip.show(); delay(SPEED_FILL); lv_timer_handler();
     }
+    // STAGE 3: Pulse Breathing Fade (Band Color)
     for(int pulse = 0; pulse < 2; pulse++){
-        for(int b = 50; b <= 255; b += 15){ 
-            strip.fill(strip.gamma32(color)); 
-            strip.setBrightness(b); strip.show(); delay(10); lv_timer_handler(); 
-        }
-        for(int b = 255; b >= 50; b -= 15){ 
-            strip.fill(strip.gamma32(color)); 
-            strip.setBrightness(b); strip.show(); delay(10); lv_timer_handler(); 
-        }
+        for(int b = 30; b <= 255; b += 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); }
+        for(int b = 255; b >= 30; b -= 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); }
     }
     if(ui_mickeyScanner) lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 0, 0);
     strip.clear(); strip.setBrightness(40); strip.show();
@@ -136,65 +125,62 @@ void reset_record_panels() {
     if(ui_ScanBandPnl3) lv_obj_add_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
 }
 
-// --- Callbacks for SquareLine Events ---
+// Callbacks (C Linkage)
 extern "C" {
+    void ui_event_RegisterFromPopup(lv_event_t * e) {
+        if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
+            if (bandCount < 10) {
+                memcpy(registeredBands[bandCount].uid, tempRecord.uid, 7);
+                snprintf(registeredBands[bandCount].name, 20, "MagicBand %d", bandCount + 1);
+                registeredBands[bandCount].color = 0x00FF00;
+                memset(registeredBands[bandCount].imageUrl, 0, 100);
+                bandCount++;
+                prefs.begin("mbands", false);
+                prefs.putInt("count", bandCount);
+                prefs.putBytes(("b" + String(bandCount - 1)).c_str(), &registeredBands[bandCount-1], sizeof(BandRecord));
+                prefs.end();
+            }
+            if(ui_RegisterConfirmPnl) lv_obj_add_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN);
+            _ui_screen_change(&ui_RecordScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_RecordScreen_screen_init);
+            if(ui_ScanBandPnl1) lv_obj_add_flag(ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN);
+            if(ui_ScanBandPnl2) lv_obj_add_flag(ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN);
+            if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     void fn_start_registration(lv_event_t * e) {
         isWaitingForUID = true;
-        // UI Change: Hide "Start" panel, show "Scanning" panel
         if(ui_ScanBandPnl1) lv_obj_add_flag(ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN);
         if(ui_ScanBandPnl2) lv_obj_clear_flag(ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN);
-        if(ui_ScanBandPnl3) lv_obj_add_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
-        
-        Serial.println("SYSTEM: Scanning Mode Active...");
     }
-
     void fn_save_band(lv_event_t * e) {
-        // Since we now auto-save in the loop() during registration,
-        // this function just needs to return the user to the main screen.
         _ui_screen_change(&ui_Scanner, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_Scanner_screen_init);
-        Serial.println("SYSTEM: Registration complete. Edit details via web.");
     }
-
     void fn_refresh_roller(lv_event_t * e) {
         if (!ui_BandRoller) return;
         String options = "";
         for (int i = 0; i < bandCount; i++) options += String(registeredBands[i].name) + "\n";
-        lv_roller_set_options(ui_BandRoller, options.length() > 0 ? options.c_str() : "No Bands Saved", LV_ROLLER_MODE_NORMAL);
+        lv_roller_set_options(ui_BandRoller, options.length() > 0 ? options.c_str() : "No Bands", LV_ROLLER_MODE_NORMAL);
     }
-
     void fn_prepare_edit_panel(lv_event_t * e) {
         int index = lv_roller_get_selected(ui_BandRoller);
         if (bandCount > 0 && ui_EditNameLabel) lv_label_set_text(ui_EditNameLabel, registeredBands[index].name);
     }
-
     void fn_delete_selected_band(lv_event_t * e) {
         int index = lv_roller_get_selected(ui_BandRoller);
         if (index >= bandCount) return;
-        prefs.begin("mbands", false);
-        for (int i = index; i < bandCount - 1; i++) {
-            registeredBands[i] = registeredBands[i + 1];
-            prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
-        }
+        for (int i = index; i < bandCount - 1; i++) registeredBands[i] = registeredBands[i + 1];
         bandCount--;
-        prefs.putInt("count", bandCount);
+        prefs.begin("mbands", false); prefs.clear(); prefs.putInt("count", bandCount);
+        for(int i=0; i<bandCount; i++) prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
         prefs.end();
         fn_refresh_roller(NULL);
     }
-
     void fn_toggle_wifi(lv_event_t * e) {
-        if (!isWiFiActive) {
-            WiFi.mode(WIFI_AP);
-            WiFi.softAP("MagicBand-Hub", "password123");
-            Serial.print("HOTSPOT: Active at ");
-            Serial.println(WiFi.softAPIP()); // RESTORED
-            startWebServer();
-            isWiFiActive = true;
+        if (!isWiFiActive) { 
+            WiFi.mode(WIFI_AP); WiFi.softAP("MagicBand-Hub", "password123"); startWebServer(); isWiFiActive = true; 
             if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Hotspot Active");
-        } else {
-            stopWebServer();
-            WiFi.softAPdisconnect(true);
-            WiFi.mode(WIFI_OFF);
-            isWiFiActive = false;
+        } else { 
+            stopWebServer(); WiFi.softAPdisconnect(true); isWiFiActive = false; 
             if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "WiFi Disabled");
         }
     }
@@ -202,13 +188,8 @@ extern "C" {
 
 void setup() {
     Serial.begin(115200);
-    delay(2000); 
-    Serial.println("--- SYSTEM BOOT STARTING ---");
-
-    // 1. Hardware & Memory First
     prefs.begin("mbands", true);
-    int rawCount = prefs.getInt("count", 0);
-    bandCount = (rawCount < 0 || rawCount > 10) ? 0 : rawCount;
+    int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 10) ? 0 : rc;
     for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
     prefs.end();
     
@@ -217,7 +198,6 @@ void setup() {
     I2C_NFC.begin(NFC_SDA, NFC_SCL, 100000);
     if(nfc.begin()) nfc.SAMConfig();
 
-    // 2. Initialize LVGL Drivers
     strip.begin(); strip.setBrightness(40); strip.show();
     lv_init(); tft.begin(); tft.setRotation(0);
     pinMode(TFT_BL, OUTPUT); digitalWrite(TFT_BL, HIGH); 
@@ -231,82 +211,53 @@ void setup() {
     const esp_timer_create_args_t ta = { .callback = [](void* arg){ lv_tick_inc(2); }, .name="t" };
     esp_timer_handle_t th; esp_timer_create(&ta, &th); esp_timer_start_periodic(th, 2000);
 
-    // 3. CRITICAL: Initialize UI objects BEFORE using them
     ui_init(); 
-    Serial.println("CHECKPOINT: UI Ready.");
+    if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Tap below to set up WiFi");
+    if(ui_NewBandConfirm) lv_obj_add_event_cb(ui_NewBandConfirm, ui_event_RegisterFromPopup, LV_EVENT_CLICKED, NULL);
 
-    // 4. Now attach callbacks to the initialized objects
-    lv_obj_add_event_cb(ui_RecordScreen, [](lv_event_t * e){
-        if(lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) reset_record_panels();
-    }, LV_EVENT_SCREEN_LOADED, NULL);
-
-    // 5. Initialize Web Routes & WiFi
     initWebServer(); 
-
-    if (tryConnectSavedWiFi()) {
-        isWiFiActive = true;
-        startWebServer();
-        Serial.println("SYSTEM: WiFi Online.");
-    }
-
-    // Attach registration panels
-    lv_obj_add_event_cb(ui_RecordScreen, [](lv_event_t * e){
-        if(lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) reset_record_panels();
-    }, LV_EVENT_SCREEN_LOADED, NULL);
-
-    Serial.println("--- SYSTEM READY ---");
+    if (tryConnectSavedWiFi()) { isWiFiActive = true; startWebServer(); if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Connected"); }
 }
 
 void loop() {
     lv_timer_handler(); 
-
-    static uint32_t lastAnim = 0;
-    if (isWaitingForUID && (millis() - lastAnim > 50)) {
-        lastAnim = millis();
-        runWhiteSwirl();
+    static int lc = 0; if (bandCount != lc) { fn_refresh_roller(NULL); lc = bandCount; }
+    if (isWaitingForUID) { 
+        static uint32_t la = 0; 
+        if (millis() - la > SPEED_MANUAL) { la = millis(); runWhiteSwirl(SPEED_MANUAL); } 
     }
 
-    // Check if we need to refresh the UI if names were changed via Web
-    static int lastKnownBandCount = 0;
-    if (bandCount != lastKnownBandCount) {
-        fn_refresh_roller(NULL); // Call the SquareLine refresh function
-        lastKnownBandCount = bandCount;
-    }
-    
-    static uint32_t lastScan = 0;
-    if (millis() - lastScan > 300) {
-        lastScan = millis();
-        uint8_t uid[7]; uint8_t uidLen;
-        
-        if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen, 50)) {
-            if (isWaitingForUID) {
-                // SUCCESS: Registered new band
+    static uint32_t ls = 0;
+    if (millis() - ls > 400) {
+        ls = millis();
+        uint8_t uid[7], len;
+        if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &len, 50)) {
+            int idx = -1;
+            for (int i = 0; i < bandCount; i++) if (memcmp(uid, registeredBands[i].uid, 7) == 0) { idx = i; break; }
+
+            if (idx != -1) {
+                if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, registeredBands[idx].name);
+                handleSuccess(registeredBands[idx].color); 
+            } 
+            else if (isWaitingForUID) {
                 memcpy(registeredBands[bandCount].uid, uid, 7);
-                
-                // --- NEW: Generate Generic Name ---
-                // bandCount is 0-indexed, so we add 1 for the label (MagicBand 1, 2, etc.)
                 snprintf(registeredBands[bandCount].name, 20, "MagicBand %d", bandCount + 1);
-                
-                // Default color (White) and empty image URL
-                registeredBands[bandCount].color = 0xFFFFFF;
+                registeredBands[bandCount].color = 0x00FF00;
                 memset(registeredBands[bandCount].imageUrl, 0, 100);
-
-                bandCount++; // Increment total count
-                
-                // Save to Permanent Storage (NVS)
-                prefs.begin("mbands", false);
-                prefs.putInt("count", bandCount);
-                prefs.putBytes(("b" + String(bandCount - 1)).c_str(), &registeredBands[bandCount - 1], sizeof(BandRecord));
+                bandCount++;
+                prefs.begin("mbands", false); prefs.putInt("count", bandCount);
+                prefs.putBytes(("b" + String(bandCount - 1)).c_str(), &registeredBands[bandCount-1], sizeof(BandRecord));
                 prefs.end();
-
                 isWaitingForUID = false;
-                
-                // UI Logic: Hide "Scanning", show "Success"
+                if(ui_ScanBandPnl1) lv_obj_add_flag(ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN);
                 if(ui_ScanBandPnl2) lv_obj_add_flag(ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN);
                 if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
-                
-                handleSuccess(0xFFFFFF); // White flash for confirmation
-                Serial.printf("SYSTEM: Registered as %s\n", registeredBands[bandCount-1].name);
+                handleSuccess(0x00FF00); 
+            }
+            else {
+                handleSuccess(0x00FF00); 
+                memcpy(tempRecord.uid, uid, 7); 
+                if(ui_RegisterConfirmPnl) lv_obj_clear_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN);
             }
         }
     }

@@ -16,9 +16,19 @@ extern void ui_Scanner_screen_destroy(void);
 extern void ui_event_Scanner( lv_event_t * e);
 extern lv_obj_t *ui_Scanner;
 extern lv_obj_t *ui_mickeyScanner;
+extern lv_obj_t *ui_RegisterConfirmPnl;
+extern lv_obj_t *ui_Label13;
+extern lv_obj_t *ui_NewBandConfirm;
+extern lv_obj_t *ui_Label14;
+extern void ui_event_NewBandCancel( lv_event_t * e);
+extern lv_obj_t *ui_NewBandCancel;
+extern lv_obj_t *ui_Label15;
 // CUSTOM VARIABLES
 extern lv_obj_t *uic_Scanner;
 extern lv_obj_t *uic_mickeyScanner;
+extern lv_obj_t *uic_RegisterConfirmPnl;
+extern lv_obj_t *uic_NewBandConfirm;
+extern lv_obj_t *uic_NewBandCancel;
 
 #ifdef __cplusplus
 } /*extern "C"*/
