@@ -5,19 +5,21 @@
 
 #include "ui.h"
 
+lv_obj_t *uic_SaveNewBand;
+lv_obj_t *uic_ScanBandPnl3;
 lv_obj_t *uic_NewBandCancel;
 lv_obj_t *uic_NewBandConfirm;
 lv_obj_t *uic_RegisterConfirmPnl;
 lv_obj_t *uic_mickeyScanner;
 lv_obj_t *uic_Scanner;
-lv_obj_t *ui_Scanner = NULL;lv_obj_t *ui_mickeyScanner = NULL;lv_obj_t *ui_RegisterConfirmPnl = NULL;lv_obj_t *ui_Label13 = NULL;lv_obj_t *ui_NewBandConfirm = NULL;lv_obj_t *ui_Label14 = NULL;lv_obj_t *ui_NewBandCancel = NULL;lv_obj_t *ui_Label15 = NULL;
+lv_obj_t *ui_Scanner = NULL;lv_obj_t *ui_mickeyScanner = NULL;lv_obj_t *ui_RegisterConfirmPnl = NULL;lv_obj_t *ui_Label13 = NULL;lv_obj_t *ui_NewBandConfirm = NULL;lv_obj_t *ui_Label14 = NULL;lv_obj_t *ui_NewBandCancel = NULL;lv_obj_t *ui_Label15 = NULL;lv_obj_t *ui_ScanBandPnl3 = NULL;lv_obj_t *ui_SaveNewBand = NULL;lv_obj_t *ui_Label4 = NULL;lv_obj_t *ui_Label12 = NULL;
 // event funtions
 void ui_event_Scanner( lv_event_t * e) {
     lv_event_code_t event_code = lv_event_get_code(e);
 
 if ( event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_LEFT  ) {
 lv_indev_wait_release(lv_indev_get_act());
-      _ui_screen_change( &ui_RecordScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_RecordScreen_screen_init);
+      _ui_screen_change( &ui_ManageBands, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_ManageBands_screen_init);
 }
 }
 
@@ -26,6 +28,14 @@ void ui_event_NewBandCancel( lv_event_t * e) {
 
 if ( event_code == LV_EVENT_CLICKED) {
       _ui_flag_modify( ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN, _UI_MODIFY_FLAG_ADD);
+}
+}
+
+void ui_event_SaveNewBand( lv_event_t * e) {
+    lv_event_code_t event_code = lv_event_get_code(e);
+
+if ( event_code == LV_EVENT_CLICKED) {
+      fn_save_band( e );
 }
 }
 
@@ -52,52 +62,114 @@ lv_obj_set_height( ui_RegisterConfirmPnl, 240);
 lv_obj_set_align( ui_RegisterConfirmPnl, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN );   /// Flags
 lv_obj_clear_flag( ui_RegisterConfirmPnl, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_bg_color(ui_RegisterConfirmPnl, lv_color_hex(0xF9F6DE), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_RegisterConfirmPnl, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_img_src( ui_RegisterConfirmPnl, &ui_img_white_starsbackground_png, LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_border_width(ui_RegisterConfirmPnl, 0, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_Label13 = lv_label_create(ui_RegisterConfirmPnl);
 lv_obj_set_width( ui_Label13, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_height( ui_Label13, LV_SIZE_CONTENT);   /// 1
-lv_obj_set_x( ui_Label13, -2 );
-lv_obj_set_y( ui_Label13, -22 );
+lv_obj_set_x( ui_Label13, 0 );
+lv_obj_set_y( ui_Label13, -28 );
 lv_obj_set_align( ui_Label13, LV_ALIGN_CENTER );
-lv_label_set_text(ui_Label13,"New Band Found! Register it?");
+lv_label_set_text(ui_Label13,"New \nBand Found!");
+lv_obj_set_style_text_color(ui_Label13, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_text_opa(ui_Label13, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_text_align(ui_Label13, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_text_font(ui_Label13, &lv_font_montserrat_24, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_NewBandConfirm = lv_btn_create(ui_RegisterConfirmPnl);
 lv_obj_set_width( ui_NewBandConfirm, 100);
-lv_obj_set_height( ui_NewBandConfirm, 50);
-lv_obj_set_x( ui_NewBandConfirm, 1 );
-lv_obj_set_y( ui_NewBandConfirm, 18 );
+lv_obj_set_height( ui_NewBandConfirm, 40);
+lv_obj_set_x( ui_NewBandConfirm, 0 );
+lv_obj_set_y( ui_NewBandConfirm, 30 );
 lv_obj_set_align( ui_NewBandConfirm, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_NewBandConfirm, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
 lv_obj_clear_flag( ui_NewBandConfirm, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_radius(ui_NewBandConfirm, 25, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_color(ui_NewBandConfirm, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_NewBandConfirm, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_Label14 = lv_label_create(ui_NewBandConfirm);
 lv_obj_set_width( ui_Label14, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_height( ui_Label14, LV_SIZE_CONTENT);   /// 1
 lv_obj_set_align( ui_Label14, LV_ALIGN_CENTER );
-lv_label_set_text(ui_Label14,"Register");
+lv_label_set_text(ui_Label14,"REGISTER");
+lv_obj_set_style_text_font(ui_Label14, &lv_font_montserrat_14, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_NewBandCancel = lv_btn_create(ui_RegisterConfirmPnl);
 lv_obj_set_width( ui_NewBandCancel, 100);
-lv_obj_set_height( ui_NewBandCancel, 50);
-lv_obj_set_x( ui_NewBandCancel, 3 );
-lv_obj_set_y( ui_NewBandCancel, 79 );
+lv_obj_set_height( ui_NewBandCancel, 40);
+lv_obj_set_x( ui_NewBandCancel, 0 );
+lv_obj_set_y( ui_NewBandCancel, 80 );
 lv_obj_set_align( ui_NewBandCancel, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_NewBandCancel, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
 lv_obj_clear_flag( ui_NewBandCancel, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_radius(ui_NewBandCancel, 25, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_color(ui_NewBandCancel, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_NewBandCancel, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_Label15 = lv_label_create(ui_NewBandCancel);
 lv_obj_set_width( ui_Label15, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_height( ui_Label15, LV_SIZE_CONTENT);   /// 1
 lv_obj_set_align( ui_Label15, LV_ALIGN_CENTER );
-lv_label_set_text(ui_Label15,"Ignore");
+lv_label_set_text(ui_Label15,"IGNORE");
+
+ui_ScanBandPnl3 = lv_obj_create(ui_Scanner);
+lv_obj_set_width( ui_ScanBandPnl3, 240);
+lv_obj_set_height( ui_ScanBandPnl3, 240);
+lv_obj_set_align( ui_ScanBandPnl3, LV_ALIGN_CENTER );
+lv_obj_add_flag( ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN );   /// Flags
+lv_obj_clear_flag( ui_ScanBandPnl3, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_bg_color(ui_ScanBandPnl3, lv_color_hex(0xFFF6DE), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_ScanBandPnl3, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_img_src( ui_ScanBandPnl3, &ui_img_white_starsbackground_png, LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_border_color(ui_ScanBandPnl3, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_border_opa(ui_ScanBandPnl3, 0, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_border_width(ui_ScanBandPnl3, 0, LV_PART_MAIN| LV_STATE_DEFAULT);
+
+ui_SaveNewBand = lv_btn_create(ui_ScanBandPnl3);
+lv_obj_set_width( ui_SaveNewBand, 162);
+lv_obj_set_height( ui_SaveNewBand, 40);
+lv_obj_set_x( ui_SaveNewBand, 0 );
+lv_obj_set_y( ui_SaveNewBand, 29 );
+lv_obj_set_align( ui_SaveNewBand, LV_ALIGN_CENTER );
+lv_obj_add_flag( ui_SaveNewBand, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
+lv_obj_clear_flag( ui_SaveNewBand, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_radius(ui_SaveNewBand, 20, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_color(ui_SaveNewBand, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_SaveNewBand, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
+
+ui_Label4 = lv_label_create(ui_SaveNewBand);
+lv_obj_set_width( ui_Label4, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_Label4, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_align( ui_Label4, LV_ALIGN_CENTER );
+lv_label_set_text(ui_Label4,"CONTINUE");
+lv_obj_set_style_text_font(ui_Label4, &lv_font_montserrat_24, LV_PART_MAIN| LV_STATE_DEFAULT);
+
+ui_Label12 = lv_label_create(ui_ScanBandPnl3);
+lv_obj_set_width( ui_Label12, LV_SIZE_CONTENT);  /// 1
+lv_obj_set_height( ui_Label12, LV_SIZE_CONTENT);   /// 1
+lv_obj_set_x( ui_Label12, 0 );
+lv_obj_set_y( ui_Label12, -26 );
+lv_obj_set_align( ui_Label12, LV_ALIGN_CENTER );
+lv_label_set_text(ui_Label12,"Band\nRegistered!");
+lv_obj_set_style_text_color(ui_Label12, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_text_opa(ui_Label12, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_text_align(ui_Label12, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_text_font(ui_Label12, &lv_font_montserrat_24, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 lv_obj_add_event_cb(ui_NewBandCancel, ui_event_NewBandCancel, LV_EVENT_ALL, NULL);
+lv_obj_add_event_cb(ui_SaveNewBand, ui_event_SaveNewBand, LV_EVENT_ALL, NULL);
 lv_obj_add_event_cb(ui_Scanner, ui_event_Scanner, LV_EVENT_ALL, NULL);
 uic_Scanner = ui_Scanner;
 uic_mickeyScanner = ui_mickeyScanner;
 uic_RegisterConfirmPnl = ui_RegisterConfirmPnl;
 uic_NewBandConfirm = ui_NewBandConfirm;
 uic_NewBandCancel = ui_NewBandCancel;
+uic_ScanBandPnl3 = ui_ScanBandPnl3;
+uic_SaveNewBand = ui_SaveNewBand;
 
 }
 
@@ -119,5 +191,11 @@ ui_Label14= NULL;
 uic_NewBandCancel= NULL;
 ui_NewBandCancel= NULL;
 ui_Label15= NULL;
+uic_ScanBandPnl3= NULL;
+ui_ScanBandPnl3= NULL;
+uic_SaveNewBand= NULL;
+ui_SaveNewBand= NULL;
+ui_Label4= NULL;
+ui_Label12= NULL;
 
 }

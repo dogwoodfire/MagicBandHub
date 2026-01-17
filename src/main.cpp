@@ -46,7 +46,7 @@ bool isSuccessActive = false;
 bool isWiFiActive = false;
 
 extern "C" {
-    extern lv_obj_t * ui_Scanner, * ui_mickeyScanner, * ui_RecordScreen, * ui_ScanBandPnl1, * ui_ScanBandPnl2, * ui_ScanBandPnl3, * ui_BandRoller, * ui_RegisterConfirmPnl, * ui_NewBandConfirm, * ui_StatusLabel, * ui_EditNameLabel;
+    extern lv_obj_t * ui_Scanner, * ui_mickeyScanner, * ui_ScanBandPnl3, * ui_BandRoller, * ui_RegisterConfirmPnl, * ui_NewBandConfirm, * ui_StatusLabel, * ui_EditNameLabel;
 }
 
 // Display/Touch Drivers
@@ -58,12 +58,33 @@ void my_disp_flush(lv_disp_drv_t* d, const lv_area_t* a, lv_color_t* c) {
 }
 
 bool get_raw_touch(int16_t &x, int16_t &y) {
-    Wire.beginTransmission(0x15); Wire.write(0x02);
-    if(Wire.endTransmission()!=0) return false;
-    Wire.requestFrom(0x15, 6);
-    if(Wire.available()==6){
-        uint8_t p=Wire.read(), xh=Wire.read(), xl=Wire.read(), yh=Wire.read(), yl=Wire.read(); Wire.read();
-        if(p>0 && p<5){ x=((xh&0x0F)<<8)|xl; y=((yh&0x0F)<<8)|yl; return true; }
+    Wire.beginTransmission(0x15); 
+    Wire.write(0x02); // Point to data register
+    
+    // If the device doesn't respond to the register write, abort immediately
+    if(Wire.endTransmission() != 0) {
+        return false; 
+    }
+
+    // Add a tiny delay (10-50 microseconds) to let the controller breathe
+    delayMicroseconds(50); 
+
+    // Attempt the read
+    uint8_t bytesReceived = Wire.requestFrom(0x15, 6);
+    
+    if(bytesReceived == 6 && Wire.available() == 6) {
+        uint8_t p = Wire.read(); 
+        uint8_t xh = Wire.read(); 
+        uint8_t xl = Wire.read(); 
+        uint8_t yh = Wire.read(); 
+        uint8_t yl = Wire.read(); 
+        Wire.read(); // Skip checksum/extra byte
+
+        if(p > 0 && p < 5) { 
+            x = ((xh & 0x0F) << 8) | xl; 
+            y = ((yh & 0x0F) << 8) | yl; 
+            return true; 
+        }
     }
     return false;
 }
@@ -120,8 +141,7 @@ void handleSuccess(uint32_t color) {
 }
 
 void reset_record_panels() {
-    if(ui_ScanBandPnl1) lv_obj_clear_flag(ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN);
-    if(ui_ScanBandPnl2) lv_obj_add_flag(ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN);
+
     if(ui_ScanBandPnl3) lv_obj_add_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -131,29 +151,52 @@ extern "C" {
         if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
             if (bandCount < 10) {
                 memcpy(registeredBands[bandCount].uid, tempRecord.uid, 7);
-                snprintf(registeredBands[bandCount].name, 20, "MagicBand %d", bandCount + 1);
+                
+                // --- NEW: Dynamic Name Generation ---
+                int nextNum = 1;
+                bool found;
+                char candidateName[20];
+                
+                // Loop until we find a name that isn't already taken
+                do {
+                    found = false;
+                    snprintf(candidateName, 20, "MagicBand %d", nextNum);
+                    for (int i = 0; i < bandCount; i++) {
+                        if (strcmp(registeredBands[i].name, candidateName) == 0) {
+                            found = true;
+                            nextNum++;
+                            break;
+                        }
+                    }
+                } while (found);
+                
+                strncpy(registeredBands[bandCount].name, candidateName, 19);
+                // ------------------------------------
+
+                // Hardware Detection for the new record
+                String hStr = ""; 
+                for(int i=0; i<7; i++) { if(tempRecord.uid[i]<0x10) hStr+="0"; hStr+=String(tempRecord.uid[i],HEX); }
+                hStr.toUpperCase();
+                String style = hStr.endsWith("90") ? "MagicBand+" : (hStr.endsWith("80") ? "MagicBand 2.0" : "Other");
+                strncpy(registeredBands[bandCount].type, style.c_str(), 19);
+
                 registeredBands[bandCount].color = 0x00FF00;
                 memset(registeredBands[bandCount].imageUrl, 0, 100);
                 bandCount++;
-                prefs.begin("mbands", false);
-                prefs.putInt("count", bandCount);
+                prefs.begin("mbands", false); prefs.putInt("count", bandCount);
                 prefs.putBytes(("b" + String(bandCount - 1)).c_str(), &registeredBands[bandCount-1], sizeof(BandRecord));
                 prefs.end();
+                fn_refresh_roller(NULL);
             }
-            if(ui_RegisterConfirmPnl) lv_obj_add_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN);
-            _ui_screen_change(&ui_RecordScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_RecordScreen_screen_init);
-            if(ui_ScanBandPnl1) lv_obj_add_flag(ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN);
-            if(ui_ScanBandPnl2) lv_obj_add_flag(ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN);
-            if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
+
+            // 2. UI UPDATES (NOW ON SAME SCREEN)
+            if(ui_RegisterConfirmPnl) lv_obj_add_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN); // Hide popup
+            if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN); // Show success on Scanner screen
         }
     }
-    void fn_start_registration(lv_event_t * e) {
-        isWaitingForUID = true;
-        if(ui_ScanBandPnl1) lv_obj_add_flag(ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN);
-        if(ui_ScanBandPnl2) lv_obj_clear_flag(ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN);
-    }
+
     void fn_save_band(lv_event_t * e) {
-        _ui_screen_change(&ui_Scanner, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_Scanner_screen_init);
+    reset_record_panels();
     }
     void fn_refresh_roller(lv_event_t * e) {
         if (!ui_BandRoller) return;
@@ -232,16 +275,44 @@ void loop() {
         ls = millis();
         uint8_t uid[7], len;
         if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &len, 50)) {
+            String hexUID = "";
+            for (uint8_t i = 0; i < len; i++) { if (uid[i] < 0x10) hexUID += "0"; hexUID += String(uid[i], HEX); if (i < len - 1) hexUID += ":"; }
+            hexUID.toUpperCase();
+
+            String style = hexUID.endsWith("90") ? "MagicBand+" : (hexUID.endsWith("80") ? "MagicBand 2.0" : "MagicBand 1.0 / Other");
+            Serial.printf("\n--- NFC SCAN: %s ---\nHARDWARE: %s\n", hexUID.c_str(), style.c_str());
+
             int idx = -1;
             for (int i = 0; i < bandCount; i++) if (memcmp(uid, registeredBands[i].uid, 7) == 0) { idx = i; break; }
 
             if (idx != -1) {
+                // Known Band: Set name and pulse his color
                 if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, registeredBands[idx].name);
                 handleSuccess(registeredBands[idx].color); 
             } 
             else if (isWaitingForUID) {
+                // Manual registration via button
                 memcpy(registeredBands[bandCount].uid, uid, 7);
-                snprintf(registeredBands[bandCount].name, 20, "MagicBand %d", bandCount + 1);
+                
+                // --- NEW: Dynamic Name Generation ---
+                int nextNum = 1;
+                bool found;
+                char candidateName[20];
+                do {
+                    found = false;
+                    snprintf(candidateName, 20, "MagicBand %d", nextNum);
+                    for (int i = 0; i < bandCount; i++) {
+                        if (strcmp(registeredBands[i].name, candidateName) == 0) {
+                            found = true;
+                            nextNum++;
+                            break;
+                        }
+                    }
+                } while (found);
+                strncpy(registeredBands[bandCount].name, candidateName, 19);
+                // ------------------------------------
+
+                strncpy(registeredBands[bandCount].type, style.c_str(), 19);
                 registeredBands[bandCount].color = 0x00FF00;
                 memset(registeredBands[bandCount].imageUrl, 0, 100);
                 bandCount++;
@@ -249,15 +320,20 @@ void loop() {
                 prefs.putBytes(("b" + String(bandCount - 1)).c_str(), &registeredBands[bandCount-1], sizeof(BandRecord));
                 prefs.end();
                 isWaitingForUID = false;
-                if(ui_ScanBandPnl1) lv_obj_add_flag(ui_ScanBandPnl1, LV_OBJ_FLAG_HIDDEN);
-                if(ui_ScanBandPnl2) lv_obj_add_flag(ui_ScanBandPnl2, LV_OBJ_FLAG_HIDDEN);
+                
+                // Show Success Panel child of Scanner screen
                 if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
                 handleSuccess(0x00FF00); 
             }
             else {
+                // DISCOVERY: Unknown Band Found
+                if(ui_StatusLabel) {
+                    String msg = style + " Found!";
+                    lv_label_set_text(ui_StatusLabel, msg.c_str());
+                }
                 handleSuccess(0x00FF00); 
                 memcpy(tempRecord.uid, uid, 7); 
-                if(ui_RegisterConfirmPnl) lv_obj_clear_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN);
+                if(ui_RegisterConfirmPnl) lv_obj_clear_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN); // Unhide Popup
             }
         }
     }

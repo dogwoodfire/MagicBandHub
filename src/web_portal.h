@@ -9,13 +9,12 @@ struct BandRecord {
     uint32_t color;
     char name[20];
     char imageUrl[100];
+    char type[20]; // NEW: Stores hardware generation (MB+, 2.0, etc.)
 };
 
-// Logic functions (C++)
 void initWebServer();
 bool tryConnectSavedWiFi();
 
-// UI Callbacks (C Linkage)
 #ifdef __cplusplus
 extern "C" {
 #endif

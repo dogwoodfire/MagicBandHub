@@ -18,7 +18,6 @@ uint32_t hexToUint(String hex) {
 }
 
 void initWebServer() {
-    // 1. DASHBOARD HANDLER
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
         html += "<style>body{font-family:sans-serif; text-align:center; background:#f4f4f9; padding:20px;} ";
@@ -35,11 +34,15 @@ void initWebServer() {
             html += "Pass: <input type='password' name='pass' placeholder='Password'><br><br>";
             html += "<input type='submit' class='btn-save' value='Save & Connect Hub'></form></div>";
         } else {
-            html += "<h1>MagicBand Manager</h1><p>Connected to: " + WiFi.SSID() + "</p>";
+            html += "<h1>MagicBand Manager</h1><p>Home WiFi: " + WiFi.SSID() + "</p>";
             if(bandCount == 0) html += "<p>No bands saved. Scan one on the hub!</p>";
             for(int i=0; i < bandCount; i++) {
                 char hStr[8]; sprintf(hStr, "#%06X", (unsigned int)registeredBands[i].color);
                 html += "<div class='card'><h3>" + String(registeredBands[i].name) + "</h3>";
+                
+                // NEW: Hardware Type Display
+                html += "<p style='color:#666; font-size:0.8em; margin-top:-10px;'>Type: " + String(registeredBands[i].type) + "</p>";
+
                 if(strlen(registeredBands[i].imageUrl) > 5) {
                     html += "<img src='" + String(registeredBands[i].imageUrl) + "' style='width:100px; border-radius:8px;'><br>";
                 }
@@ -56,7 +59,6 @@ void initWebServer() {
         request->send(200, "text/html", html);
     });
 
-    // 2. UPDATE HANDLER
     server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request){
         if(request->hasParam("id")){
             int id = request->getParam("id")->value().toInt();
@@ -73,7 +75,6 @@ void initWebServer() {
         request->redirect("/");
     });
 
-    // 3. DELETE HANDLER (CLEARS ALL URLS AND GHOST DATA)
     server.on("/delete", HTTP_GET, [](AsyncWebServerRequest *request){
         if(request->hasParam("id")){
             int id = request->getParam("id")->value().toInt();
@@ -81,7 +82,7 @@ void initWebServer() {
                 for(int i = id; i < bandCount - 1; i++) registeredBands[i] = registeredBands[i+1];
                 bandCount--;
                 prefs.begin("mbands", false);
-                prefs.clear(); // Wipes memory to remove associated IMG urls
+                prefs.clear(); 
                 prefs.putInt("count", bandCount);
                 for(int i=0; i<bandCount; i++) prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
                 prefs.end();
@@ -91,14 +92,13 @@ void initWebServer() {
         request->redirect("/");
     });
 
-    // 4. SET WIFI HANDLER
     server.on("/setwifi", HTTP_GET, [](AsyncWebServerRequest *request){
         if(request->hasParam("ssid")){
             prefs.begin("wifi", false);
             prefs.putString("ssid", request->getParam("ssid")->value());
             prefs.putString("pass", request->hasParam("pass") ? request->getParam("pass")->value() : "");
             prefs.end();
-            request->send(200, "text/html", "WiFi details saved. Hub is restarting...");
+            request->send(200, "text/html", "Restarting...");
             delay(2000); ESP.restart();
         }
     });

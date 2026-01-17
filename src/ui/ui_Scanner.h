@@ -23,12 +23,19 @@ extern lv_obj_t *ui_Label14;
 extern void ui_event_NewBandCancel( lv_event_t * e);
 extern lv_obj_t *ui_NewBandCancel;
 extern lv_obj_t *ui_Label15;
+extern lv_obj_t *ui_ScanBandPnl3;
+extern void ui_event_SaveNewBand( lv_event_t * e);
+extern lv_obj_t *ui_SaveNewBand;
+extern lv_obj_t *ui_Label4;
+extern lv_obj_t *ui_Label12;
 // CUSTOM VARIABLES
 extern lv_obj_t *uic_Scanner;
 extern lv_obj_t *uic_mickeyScanner;
 extern lv_obj_t *uic_RegisterConfirmPnl;
 extern lv_obj_t *uic_NewBandConfirm;
 extern lv_obj_t *uic_NewBandCancel;
+extern lv_obj_t *uic_ScanBandPnl3;
+extern lv_obj_t *uic_SaveNewBand;
 
 #ifdef __cplusplus
 } /*extern "C"*/

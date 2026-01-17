@@ -36,27 +36,39 @@ void ui_Hotspot_screen_init(void)
 {
 ui_Hotspot = lv_obj_create(NULL);
 lv_obj_clear_flag( ui_Hotspot, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_bg_color(ui_Hotspot, lv_color_hex(0xF9F6DE), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_Hotspot, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_img_src( ui_Hotspot, &ui_img_white_starsbackground_png, LV_PART_MAIN | LV_STATE_DEFAULT );
 
 ui_HotspotToggle = lv_btn_create(ui_Hotspot);
 lv_obj_set_width( ui_HotspotToggle, 170);
-lv_obj_set_height( ui_HotspotToggle, 50);
+lv_obj_set_height( ui_HotspotToggle, 80);
+lv_obj_set_x( ui_HotspotToggle, 0 );
+lv_obj_set_y( ui_HotspotToggle, 28 );
 lv_obj_set_align( ui_HotspotToggle, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_HotspotToggle, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
 lv_obj_clear_flag( ui_HotspotToggle, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_radius(ui_HotspotToggle, 40, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_color(ui_HotspotToggle, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_HotspotToggle, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_Label9 = lv_label_create(ui_HotspotToggle);
 lv_obj_set_width( ui_Label9, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_height( ui_Label9, LV_SIZE_CONTENT);   /// 1
 lv_obj_set_align( ui_Label9, LV_ALIGN_CENTER );
-lv_label_set_text(ui_Label9,"Toggle Wifi");
+lv_label_set_text(ui_Label9,"TOGGLE\nWIFI");
+lv_obj_set_style_text_align(ui_Label9, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_text_font(ui_Label9, &lv_font_montserrat_24, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_StatusLabel = lv_label_create(ui_Hotspot);
 lv_obj_set_width( ui_StatusLabel, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_height( ui_StatusLabel, LV_SIZE_CONTENT);   /// 1
-lv_obj_set_x( ui_StatusLabel, -2 );
-lv_obj_set_y( ui_StatusLabel, -52 );
+lv_obj_set_x( ui_StatusLabel, 4 );
+lv_obj_set_y( ui_StatusLabel, -33 );
 lv_obj_set_align( ui_StatusLabel, LV_ALIGN_CENTER );
 lv_label_set_text(ui_StatusLabel,"Tap Bellow to Set Up Wifi");
+lv_obj_set_style_text_color(ui_StatusLabel, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_text_opa(ui_StatusLabel, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 lv_obj_add_event_cb(ui_HotspotToggle, ui_event_HotspotToggle, LV_EVENT_ALL, NULL);
 lv_obj_add_event_cb(ui_Hotspot, ui_event_Hotspot, LV_EVENT_ALL, NULL);

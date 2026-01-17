@@ -64,12 +64,17 @@ void ui_ManageBands_screen_init(void)
 {
 ui_ManageBands = lv_obj_create(NULL);
 lv_obj_clear_flag( ui_ManageBands, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_bg_color(ui_ManageBands, lv_color_hex(0xF9F6DE), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_ManageBands, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_img_src( ui_ManageBands, &ui_img_white_starsbackground_png, LV_PART_MAIN | LV_STATE_DEFAULT );
 
 ui_BandListPnl = lv_obj_create(ui_ManageBands);
 lv_obj_set_width( ui_BandListPnl, 240);
 lv_obj_set_height( ui_BandListPnl, 240);
 lv_obj_set_align( ui_BandListPnl, LV_ALIGN_CENTER );
 lv_obj_clear_flag( ui_BandListPnl, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_bg_color(ui_BandListPnl, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_BandListPnl, 0, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_BandRoller = lv_roller_create(ui_BandListPnl);
 lv_roller_set_options( ui_BandRoller, "Option 1\nOption 2\nOption 3", LV_ROLLER_MODE_INFINITE );
@@ -78,21 +83,25 @@ lv_obj_set_width( ui_BandRoller, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_x( ui_BandRoller, -3 );
 lv_obj_set_y( ui_BandRoller, -31 );
 lv_obj_set_align( ui_BandRoller, LV_ALIGN_CENTER );
+lv_obj_set_style_text_align(ui_BandRoller, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_BtnOpenEdit = lv_btn_create(ui_BandListPnl);
 lv_obj_set_width( ui_BtnOpenEdit, 100);
-lv_obj_set_height( ui_BtnOpenEdit, 50);
+lv_obj_set_height( ui_BtnOpenEdit, 40);
 lv_obj_set_x( ui_BtnOpenEdit, 0 );
 lv_obj_set_y( ui_BtnOpenEdit, 76 );
 lv_obj_set_align( ui_BtnOpenEdit, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_BtnOpenEdit, LV_OBJ_FLAG_SCROLL_ON_FOCUS );   /// Flags
 lv_obj_clear_flag( ui_BtnOpenEdit, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+lv_obj_set_style_radius(ui_BtnOpenEdit, 20, LV_PART_MAIN| LV_STATE_DEFAULT);
+lv_obj_set_style_bg_color(ui_BtnOpenEdit, lv_color_hex(0x3677A3), LV_PART_MAIN | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_BtnOpenEdit, 255, LV_PART_MAIN| LV_STATE_DEFAULT);
 
 ui_BandEditBtn = lv_label_create(ui_BtnOpenEdit);
 lv_obj_set_width( ui_BandEditBtn, LV_SIZE_CONTENT);  /// 1
 lv_obj_set_height( ui_BandEditBtn, LV_SIZE_CONTENT);   /// 1
 lv_obj_set_align( ui_BandEditBtn, LV_ALIGN_CENTER );
-lv_label_set_text(ui_BandEditBtn,"Edit");
+lv_label_set_text(ui_BandEditBtn,"EDIT");
 
 ui_EditPanel = lv_obj_create(ui_ManageBands);
 lv_obj_set_width( ui_EditPanel, 240);
@@ -100,6 +109,10 @@ lv_obj_set_height( ui_EditPanel, 240);
 lv_obj_set_align( ui_EditPanel, LV_ALIGN_CENTER );
 lv_obj_add_flag( ui_EditPanel, LV_OBJ_FLAG_HIDDEN );   /// Flags
 lv_obj_clear_flag( ui_EditPanel, LV_OBJ_FLAG_SCROLLABLE );    /// Flags
+
+lv_obj_set_style_bg_color(ui_EditPanel, lv_color_hex(0xFFFFFF), LV_PART_SCROLLBAR | LV_STATE_DEFAULT );
+lv_obj_set_style_bg_opa(ui_EditPanel, 0, LV_PART_SCROLLBAR| LV_STATE_DEFAULT);
+lv_obj_set_style_border_width(ui_EditPanel, 0, LV_PART_SCROLLBAR| LV_STATE_DEFAULT);
 
 ui_BtnDeleteBand = lv_btn_create(ui_EditPanel);
 lv_obj_set_width( ui_BtnDeleteBand, 100);

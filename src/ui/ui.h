@@ -27,7 +27,6 @@ extern "C" {
 
 ///////////////////// SCREENS ////////////////////
 #include "ui_Scanner.h"
-#include "ui_RecordScreen.h"
 #include "ui_ManageBands.h"
 #include "ui_Hotspot.h"
 
@@ -38,6 +37,7 @@ extern lv_obj_t *ui____initial_actions0;
 
 // IMAGES AND IMAGE SETS
 LV_IMG_DECLARE( ui_img_mickey_png);   // assets/mickey.png
+LV_IMG_DECLARE( ui_img_white_starsbackground_png);   // assets/white_starsbackground.png
 
 // FONTS
 LV_FONT_DECLARE( ui_font_Monsterat38withSymbols);
