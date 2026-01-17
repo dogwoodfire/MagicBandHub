@@ -11,6 +11,9 @@
 #include <LittleFS.h>
 #include <ESPmDNS.h>
 #include "web_portal.h"
+#include <time.h>
+#include "esp_sntp.h"
+#include <HTTPClient.h>
 
 // --- Animation Speed Variables (Increase to SLOW DOWN) ---
 #define SPEED_COMET 30       
@@ -38,6 +41,11 @@ Adafruit_PN532 nfc(NFC_IRQ, LCD_RST, &I2C_NFC);
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 Preferences prefs;
 
+uint32_t lastActivityTime = 0;
+uint32_t idleTimeout = 60000;   // Default 1 min
+uint32_t sleepTimeout = 300000; // Default 5 min
+bool isScreenOn = true;
+
 BandRecord registeredBands[10];
 int bandCount = 0;
 BandRecord tempRecord; 
@@ -46,7 +54,23 @@ bool isSuccessActive = false;
 bool isWiFiActive = false;
 
 extern "C" {
-    extern lv_obj_t * ui_Scanner, * ui_mickeyScanner, * ui_ScanBandPnl3, * ui_BandRoller, * ui_RegisterConfirmPnl, * ui_NewBandConfirm, * ui_StatusLabel, * ui_EditNameLabel;
+    extern lv_obj_t * ui_Scanner, * ui_mickeyScanner, * ui_ScanBandPnl3, * ui_BandRoller, * ui_RegisterConfirmPnl, * ui_NewBandConfirm, * ui_StatusLabel, * ui_EditNameLabel, * ui_StandbyScreen, * ui_clock, * ui_Hotspot;
+}
+
+void wakeScreen() {
+    // 1. Switch screen while the lights are still OFF
+    if(lv_scr_act() == ui_StandbyScreen) {
+        _ui_screen_change(&ui_Scanner, LV_SCR_LOAD_ANIM_NONE, 0, 0, &ui_Scanner_screen_init);
+        lv_timer_handler(); // Force the screen update to happen immediately
+    }
+
+    // 2. Now turn the backlight on
+    if(!isScreenOn) {
+        digitalWrite(TFT_BL, HIGH);
+        isScreenOn = true;
+    }
+    
+    lastActivityTime = millis();
 }
 
 // Display/Touch Drivers
@@ -89,11 +113,18 @@ bool get_raw_touch(int16_t &x, int16_t &y) {
     return false;
 }
 
+
+
 void my_touchpad_read(lv_indev_drv_t* d, lv_indev_data_t* data) {
     int16_t tx, ty;
-    if(get_raw_touch(tx, ty)){ data->state=LV_INDEV_STATE_PR; data->point.x=tx; data->point.y=ty; }
+    if(get_raw_touch(tx, ty)){ 
+        data->state=LV_INDEV_STATE_PR; data->point.x=tx; data->point.y=ty; 
+        wakeScreen(); // ADD THIS LINE
+    }
     else data->state=LV_INDEV_STATE_REL;
 }
+
+
 
 void runWhiteSwirl(int speed) {
     static uint8_t swirlPos = 0;
@@ -143,6 +174,56 @@ void handleSuccess(uint32_t color) {
 void reset_record_panels() {
 
     if(ui_ScanBandPnl3) lv_obj_add_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
+}
+
+void updateClock() {
+    if (lv_scr_act() != ui_StandbyScreen || ui_clock == NULL) return;
+
+    static uint32_t lastClockUpdate = 0;
+    if (millis() - lastClockUpdate < 1000) return;
+    lastClockUpdate = millis();
+
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        lv_label_set_text(ui_clock, "--:--");
+        return;
+    }
+
+    char timeBuf[6]; // Buffer for "HH:MM\0"
+    // Use "%H:%M" for 24-hour or "%I:%M" for 12-hour
+    strftime(timeBuf, sizeof(timeBuf), "%H:%M", &timeinfo);
+    lv_label_set_text(ui_clock, timeBuf);
+}
+
+
+void autoSetTimezone() {
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    HTTPClient http;
+    // Query timezone info based on public IP
+    http.begin("http://worldtimeapi.org/api/ip");
+    int httpCode = http.GET();
+
+    if (httpCode == 200) {
+        String payload = http.getString();
+        // Extract the offset (e.g., "+01:00" or "-05:00")
+        int offsetIdx = payload.indexOf("\"utc_offset\":\"") + 14;
+        String offsetStr = payload.substring(offsetIdx, offsetIdx + 6);
+        
+        // Convert "+HH:MM" to total seconds
+        int hours = offsetStr.substring(1, 3).toInt();
+        int mins = offsetStr.substring(4, 6).toInt();
+        long totalOffset = (hours * 3600) + (mins * 60);
+        if (offsetStr.startsWith("-")) totalOffset = -totalOffset;
+
+        // Apply the detected offset (NTP sync)
+        configTime(totalOffset, 0, "pool.ntp.org", "time.nist.gov");
+        Serial.printf("Timezone Auto-Set: %s (Offset: %ld sec)\n", offsetStr.c_str(), totalOffset);
+    } else {
+        Serial.println("Timezone API failed, using default UTC.");
+        configTime(0, 0, "pool.ntp.org");
+    }
+    http.end();
 }
 
 // Callbacks (C Linkage)
@@ -227,9 +308,26 @@ extern "C" {
             if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "WiFi Disabled");
         }
     }
+    void handleStandby() {
+        uint32_t elapsed = millis() - lastActivityTime;
+
+        // Transition to Clock Screen
+        if (elapsed > idleTimeout && lv_scr_act() != ui_StandbyScreen) {
+            _ui_screen_change(&ui_StandbyScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_StandbyScreen_screen_init);
+        }
+
+        // Turn off Screen
+        if (elapsed > sleepTimeout && isScreenOn) {
+            digitalWrite(TFT_BL, LOW);
+            isScreenOn = false;
+        } 
+    }
 }
 
+
+
 void setup() {
+    setCpuFrequencyMhz(240);
     Serial.begin(115200);
     prefs.begin("mbands", true);
     int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 10) ? 0 : rc;
@@ -254,16 +352,47 @@ void setup() {
     const esp_timer_create_args_t ta = { .callback = [](void* arg){ lv_tick_inc(2); }, .name="t" };
     esp_timer_handle_t th; esp_timer_create(&ta, &th); esp_timer_start_periodic(th, 2000);
 
+    prefs.begin("settings", true);
+    idleTimeout = prefs.getUInt("idle", 60000);
+    sleepTimeout = prefs.getUInt("sleep", 300000);
+    prefs.end();
+
     ui_init(); 
     if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Tap below to set up WiFi");
     if(ui_NewBandConfirm) lv_obj_add_event_cb(ui_NewBandConfirm, ui_event_RegisterFromPopup, LV_EVENT_CLICKED, NULL);
 
     initWebServer(); 
-    if (tryConnectSavedWiFi()) { isWiFiActive = true; startWebServer(); if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Connected"); }
+    if (tryConnectSavedWiFi()) { 
+        isWiFiActive = true; 
+        startWebServer(); 
+        if(ui_StatusLabel) {
+            String msg = "Connected to: " + WiFi.SSID();
+            lv_label_set_text(ui_StatusLabel, msg.c_str());
+        }
+        autoSetTimezone(); 
+    } else {
+        if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Tap Bellow to Set Up Wifi");
+    }
 }
 
 void loop() {
     lv_timer_handler(); 
+    handleStandby();
+    updateClock();
+
+    static lv_obj_t * last_scr = NULL;
+    if(lv_scr_act() != last_scr) {
+        last_scr = lv_scr_act();
+        if(last_scr == ui_Hotspot && ui_StatusLabel) {
+            if(WiFi.status() == WL_CONNECTED) {
+                String msg = "Connected to: " + WiFi.SSID();
+                lv_label_set_text(ui_StatusLabel, msg.c_str());
+            } else {
+                lv_label_set_text(ui_StatusLabel, "Tap Bellow to Set Up Wifi");
+            }
+        }
+    }
+    
     static int lc = 0; if (bandCount != lc) { fn_refresh_roller(NULL); lc = bandCount; }
     if (isWaitingForUID) { 
         static uint32_t la = 0; 
@@ -275,6 +404,12 @@ void loop() {
         ls = millis();
         uint8_t uid[7], len;
         if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &len, 50)) {
+            wakeScreen();
+            lastActivityTime = millis(); // Reset timer on every scan
+            if(!isScreenOn) {
+                digitalWrite(TFT_BL, HIGH);
+                isScreenOn = true;
+            }
             String hexUID = "";
             for (uint8_t i = 0; i < len; i++) { if (uid[i] < 0x10) hexUID += "0"; hexUID += String(uid[i], HEX); if (i < len - 1) hexUID += ":"; }
             hexUID.toUpperCase();
@@ -286,10 +421,9 @@ void loop() {
             for (int i = 0; i < bandCount; i++) if (memcmp(uid, registeredBands[i].uid, 7) == 0) { idx = i; break; }
 
             if (idx != -1) {
-                // Known Band: Set name and pulse his color
-                if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, registeredBands[idx].name);
+                // Only update label if we are on the main scanner screen
                 handleSuccess(registeredBands[idx].color); 
-            } 
+            }
             else if (isWaitingForUID) {
                 // Manual registration via button
                 memcpy(registeredBands[bandCount].uid, uid, 7);
@@ -326,14 +460,9 @@ void loop() {
                 handleSuccess(0x00FF00); 
             }
             else {
-                // DISCOVERY: Unknown Band Found
-                if(ui_StatusLabel) {
-                    String msg = style + " Found!";
-                    lv_label_set_text(ui_StatusLabel, msg.c_str());
-                }
                 handleSuccess(0x00FF00); 
                 memcpy(tempRecord.uid, uid, 7); 
-                if(ui_RegisterConfirmPnl) lv_obj_clear_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN); // Unhide Popup
+                if(ui_RegisterConfirmPnl) lv_obj_clear_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN);
             }
         }
     }

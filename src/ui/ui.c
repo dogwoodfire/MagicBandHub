@@ -35,6 +35,7 @@ lv_disp_set_theme(dispp, theme);
 ui_Scanner_screen_init();
 ui_ManageBands_screen_init();
 ui_Hotspot_screen_init();
+ui_StandbyScreen_screen_init();
 ui____initial_actions0 = lv_obj_create(NULL);
 lv_disp_load_scr( ui_Scanner);
 }
@@ -43,4 +44,5 @@ void ui_destroy( void )
 {ui_Scanner_screen_destroy();
 ui_ManageBands_screen_destroy();
 ui_Hotspot_screen_destroy();
+ui_StandbyScreen_screen_destroy();
 }

@@ -1,6 +1,7 @@
 SET(SOURCES ui_Scanner.c
     ui_ManageBands.c
     ui_Hotspot.c
+    ui_StandbyScreen.c
     ui.c
     ui_comp_hook.c
     ui_helpers.c

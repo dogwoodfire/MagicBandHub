@@ -9,6 +9,9 @@ extern BandRecord registeredBands[10];
 extern int bandCount;
 extern AsyncWebServer server;
 extern Preferences prefs;
+// NEW: Access the timeout variables from main.cpp
+extern uint32_t idleTimeout;
+extern uint32_t sleepTimeout;
 
 extern "C" void fn_refresh_roller(lv_event_t * e);
 
@@ -20,6 +23,7 @@ uint32_t hexToUint(String hex) {
 void initWebServer() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+        // ... (Styles remain the same) ...
         html += "<style>body{font-family:sans-serif; text-align:center; background:#f4f4f9; padding:20px;} ";
         html += ".card{background:white; border-radius:15px; padding:15px; margin:10px auto; max-width:350px; shadow: 2px 2px 10px #ccc;} ";
         html += "input{margin:5px; padding:8px; border-radius:5px; border:1px solid #ccc; width:80%;} ";
@@ -34,7 +38,13 @@ void initWebServer() {
             html += "Pass: <input type='password' name='pass' placeholder='Password'><br><br>";
             html += "<input type='submit' class='btn-save' value='Save & Connect Hub'></form></div>";
         } else {
-            html += "<h1>MagicBand Manager</h1><p>Home WiFi: " + WiFi.SSID() + "</p>";
+            html += "<h1>MagicBand Hub</h1>";
+            
+            // NEW: Hub Settings Card
+            html += "<div class='card'><h3>Hub Settings</h3><form action='/settings' method='GET'>";
+            html += "Standby (Min): <input type='number' name='idle' value='" + String(idleTimeout / 60000) + "' min='1'><br>";
+            html += "Screen Off (Min): <input type='number' name='sleep' value='" + String(sleepTimeout / 60000) + "' min='1'><br>";
+            html += "<input type='submit' class='btn-save' value='Save Hub Settings'></form></div>";
             if(bandCount == 0) html += "<p>No bands saved. Scan one on the hub!</p>";
             for(int i=0; i < bandCount; i++) {
                 char hStr[8]; sprintf(hStr, "#%06X", (unsigned int)registeredBands[i].color);
@@ -57,6 +67,19 @@ void initWebServer() {
         }
         html += "</body></html>";
         request->send(200, "text/html", html);
+    });
+
+    // NEW: Route to handle saving settings
+    server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasParam("idle")) idleTimeout = request->getParam("idle")->value().toInt() * 60000;
+        if(request->hasParam("sleep")) sleepTimeout = request->getParam("sleep")->value().toInt() * 60000;
+        
+        prefs.begin("settings", false);
+        prefs.putUInt("idle", idleTimeout);
+        prefs.putUInt("sleep", sleepTimeout);
+        prefs.end();
+        
+        request->redirect("/");
     });
 
     server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request){

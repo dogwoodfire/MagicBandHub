@@ -29,6 +29,7 @@ extern "C" {
 #include "ui_Scanner.h"
 #include "ui_ManageBands.h"
 #include "ui_Hotspot.h"
+#include "ui_StandbyScreen.h"
 
 ///////////////////// VARIABLES ////////////////////
 
