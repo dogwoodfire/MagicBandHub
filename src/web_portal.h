@@ -25,6 +25,7 @@ extern "C" {
     void stopWebServer();
     void fn_toggle_wifi(struct _lv_event_t * e);
     void fn_refresh_roller(struct _lv_event_t * e);
+    void loadCategoriesFromPrefs();
 #ifdef __cplusplus
 }
 #endif

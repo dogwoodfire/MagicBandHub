@@ -50,6 +50,37 @@ BandRecord registeredBands[50];
 int bandCount = 0;
 char ownersList[10][20]; 
 char locationsList[10][20];
+
+// Make the C-linkage function visible to other files
+extern "C" void fn_refresh_roller(lv_event_t * e);
+
+// Reload ownersList/locationsList from NVS (safe for missing keys)
+void loadCategoriesFromPrefs() {
+    prefs.begin("mbands", true);
+
+    for (int i = 0; i < 10; i++) {
+        memset(ownersList[i], 0, sizeof(ownersList[i]));
+        memset(locationsList[i], 0, sizeof(locationsList[i]));
+
+        String oKey = "o" + String(i);
+        String lKey = "l" + String(i);
+
+        if (prefs.isKey(oKey.c_str())) {
+            String val = prefs.getString(oKey.c_str(), "");
+            strncpy(ownersList[i], val.c_str(), sizeof(ownersList[i]) - 1);
+            ownersList[i][sizeof(ownersList[i]) - 1] = '\0';
+        }
+
+        if (prefs.isKey(lKey.c_str())) {
+            String val = prefs.getString(lKey.c_str(), "");
+            strncpy(locationsList[i], val.c_str(), sizeof(locationsList[i]) - 1);
+            locationsList[i][sizeof(locationsList[i]) - 1] = '\0';
+        }
+    }
+
+    prefs.end();
+}
+
 BandRecord tempRecord; 
 bool isWaitingForUID = false;
 bool isSuccessActive = false;
@@ -84,6 +115,7 @@ void my_disp_flush(lv_disp_drv_t* d, const lv_area_t* a, lv_color_t* c) {
 }
 
 bool get_raw_touch(int16_t &x, int16_t &y) {
+    static uint32_t lastFail = 0;
     Wire.beginTransmission(0x15); 
     Wire.write(0x02); // Point to data register
     
@@ -98,7 +130,26 @@ bool get_raw_touch(int16_t &x, int16_t &y) {
     // Attempt the read
     uint8_t bytesReceived = Wire.requestFrom(0x15, 6, true);
     if (bytesReceived != 6 || Wire.available() != 6) {
-        Wire.flush();          // ESP32-specific but safe
+        Wire.flush(); // ESP32-specific
+
+        // If we just failed very recently, don't hammer the bus
+        uint32_t now = millis();
+        if (now - lastFail < 200) return false;
+        lastFail = now;
+
+        // Attempt a quick bus recovery + re-init of the driver
+        pinMode(TOUCH_SCL, OUTPUT);
+        for (int i = 0; i < 9; i++) {
+            digitalWrite(TOUCH_SCL, HIGH);
+            delayMicroseconds(5);
+            digitalWrite(TOUCH_SCL, LOW);
+            delayMicroseconds(5);
+        }
+        pinMode(TOUCH_SCL, INPUT_PULLUP);
+        delayMicroseconds(50);
+
+        Wire.end();
+        Wire.begin(TOUCH_SDA, TOUCH_SCL);
         return false;
     }
     
@@ -339,28 +390,9 @@ void setup() {
     int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 50) ? 0 : rc;
     for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
     
-    // Load category lists
-    for(int i=0; i<10; i++) {
-        String oKey = "o" + String(i);
-        String lKey = "l" + String(i);
-        
-        // Load Owners
-        if(prefs.isKey(oKey.c_str())) {
-            String val = prefs.getString(oKey.c_str(), "");
-            strncpy(ownersList[i], val.c_str(), 19);
-        } else {
-            memset(ownersList[i], 0, 20); // Force empty if key missing
-        }
-
-        // Load Locations
-        if(prefs.isKey(lKey.c_str())) {
-            String val = prefs.getString(lKey.c_str(), "");
-            strncpy(locationsList[i], val.c_str(), 19);
-        } else {
-            memset(locationsList[i], 0, 20); // Force empty if key missing
-        }
-    }
     prefs.end();
+    // Load category lists
+    loadCategoriesFromPrefs();
     
     // --- I2C BUS RECOVERY (prevents SDA lockups) ---
     pinMode(TOUCH_SDA, INPUT_PULLUP);
@@ -391,6 +423,7 @@ void setup() {
 
     // --- START I2C BUSES ---
     Wire.begin(TOUCH_SDA, TOUCH_SCL);
+    Wire.setClock(100000);
     I2C_NFC.begin(NFC_SDA, NFC_SCL, 100000);
     if(nfc.begin()) nfc.SAMConfig();
 

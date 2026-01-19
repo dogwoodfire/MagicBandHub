@@ -38,6 +38,13 @@ void initWebServer() {
         html += "for (var i=0; i<cards.length; i++) { var txt = cards[i].innerText.toLowerCase();";
         html += "cards[i].style.display = txt.includes(val) ? '' : 'none'; }}</script></head><body>";
 
+        if(request->hasParam("msg")) {
+            String msg = request->getParam("msg")->value();
+            if(msg == "category_updated") {
+                html += "<div class='card' style='background:#d4edda;color:#155724;'>Category updated successfully.</div>";
+            }
+        }
+
         if(WiFi.status() != WL_CONNECTED) {
             html += "<h1>Hub Setup</h1><div class='card'><h3>Connect WiFi</h3><form action='/setwifi' method='GET'>";
             html += "SSID: <input type='text' name='ssid' required><br>Pass: <input type='password' name='pass'><br>";
@@ -48,30 +55,47 @@ void initWebServer() {
             // SEARCH BOX
             html += "<input type='text' id='search' onkeyup='filterBands()' placeholder='Filter by Owner, Location, or Name...' style='width:90%; padding:15px; margin-bottom:20px;'>";
 
-            // CATEGORY MANAGER
-            html += "<div class='card'><h3>Manage Categories</h3>";
-            
-            // List existing Owners
-            html += "<b>Owners:</b><br>";
+            // OWNERS CARD
+            html += "<div class='card'><h3>Owners</h3>";
             for(int i=0; i<10; i++) {
                 if(ownersList[i][0] != '\0') {
-                    html += String(ownersList[i]) + " <a href='/delcat?type=o&id=" + String(i) + "' style='color:red; font-size:0.8em;'>[Delete]</a><br>";
+                    int usedCount = 0;
+                    for(int b=0; b<bandCount; b++) {
+                        if(strcmp(registeredBands[b].owner, ownersList[i]) == 0) usedCount++;
+                    }
+                    String warn = usedCount > 0 ? 
+                        "This owner is used by " + String(usedCount) + " band(s). They will be set to None. Continue?" :
+                        "Delete owner?";
+                    html += String(ownersList[i]) +
+                        " <a href='/delcat?type=o&id=" + String(i) +
+                        "' class='btn-del' onclick='return confirm(\"" + warn + "\")'>Delete</a><br>";
                 }
             }
-            
-            // List existing Locations
-            html += "<br><b>Locations:</b><br>";
+            html += "<hr><form action='/addcat' method='GET'>";
+            html += "<input type='hidden' name='type' value='o'>";
+            html += "<input type='text' name='val' placeholder='New owner name' required><br>";
+            html += "<input type='submit' class='btn-save' value='Add Owner'></form></div>";
+
+            // LOCATIONS CARD
+            html += "<div class='card'><h3>Locations</h3>";
             for(int i=0; i<10; i++) {
                 if(locationsList[i][0] != '\0') {
-                    html += String(locationsList[i]) + " <a href='/delcat?type=l&id=" + String(i) + "' style='color:red; font-size:0.8em;'>[Delete]</a><br>";
+                    int usedCount = 0;
+                    for(int b=0; b<bandCount; b++) {
+                        if(strcmp(registeredBands[b].location, locationsList[i]) == 0) usedCount++;
+                    }
+                    String warn = usedCount > 0 ?
+                        "This location is used by " + String(usedCount) + " band(s). They will be set to None. Continue?" :
+                        "Delete location?";
+                    html += String(locationsList[i]) +
+                        " <a href='/delcat?type=l&id=" + String(i) +
+                        "' class='btn-del' onclick='return confirm(\"" + warn + "\")'>Delete</a><br>";
                 }
             }
-
-            // Add New Form
             html += "<hr><form action='/addcat' method='GET'>";
-            html += "<input type='text' name='val' placeholder='New Name' required><br>";
-            html += "<select name='type'><option value='o'>Owner</option><option value='l'>Location</option></select><br>";
-            html += "<input type='submit' class='btn-save' value='Add Category'></form></div>";
+            html += "<input type='hidden' name='type' value='l'>";
+            html += "<input type='text' name='val' placeholder='New location name' required><br>";
+            html += "<input type='submit' class='btn-save' value='Add Location'></form></div>";
 
             // HUB SETTINGS
             html += "<div class='card'><h3>Hub Settings</h3><form action='/settings' method='GET'>";
@@ -185,14 +209,37 @@ void initWebServer() {
     server.on("/delcat", HTTP_GET, [](AsyncWebServerRequest *request){
         if(request->hasParam("type") && request->hasParam("id")){
             String type = request->getParam("type")->value();
-            String key = type + request->getParam("id")->value();
-            
+            int id = request->getParam("id")->value().toInt();
+
+            // Capture label before removing
+            String deletedLabel = "";
+            if(type == "o" && id >= 0 && id < 10) deletedLabel = String(ownersList[id]);
+            if(type == "l" && id >= 0 && id < 10) deletedLabel = String(locationsList[id]);
+
             prefs.begin("mbands", false);
-            prefs.remove(key.c_str()); // Permanently delete from memory
+            prefs.remove((type + String(id)).c_str());
             prefs.end();
-            
-            request->send(200, "text/html", "Category Deleted. Restarting...<script>setTimeout(()=>{window.location.href='/'}, 1000);</script>");
-            delay(500); ESP.restart();
+
+            // Clear category from bands in RAM
+            if(deletedLabel.length() > 0) {
+                if(type == "o") {
+                    for(int b=0; b<bandCount; b++) {
+                        if(strcmp(registeredBands[b].owner, deletedLabel.c_str()) == 0) {
+                            registeredBands[b].owner[0] = '\0';
+                        }
+                    }
+                } else if(type == "l") {
+                    for(int b=0; b<bandCount; b++) {
+                        if(strcmp(registeredBands[b].location, deletedLabel.c_str()) == 0) {
+                            registeredBands[b].location[0] = '\0';
+                        }
+                    }
+                }
+            }
+
+            loadCategoriesFromPrefs();
+            fn_refresh_roller(NULL);
+            request->redirect("/?msg=category_updated");
         }
     });
 
@@ -208,18 +255,27 @@ void initWebServer() {
 
             for(int i=0; i<10; i++) {
                 String key = type + String(i);
+
+                // If key doesn't exist, treat as empty without calling getString() (prevents NOT_FOUND spam)
+                if(!prefs.isKey(key.c_str())) {
+                    if(emptySlot == -1) emptySlot = i;
+                    continue;
+                }
+
+                // Key exists; read it safely
                 String current = prefs.getString(key.c_str(), "");
+
                 if (current == val) alreadyExists = true;
-                if (current == "" && emptySlot == -1) emptySlot = i;
+                if (current.length() == 0 && emptySlot == -1) emptySlot = i;
             }
 
             if(!alreadyExists && emptySlot != -1) {
                 prefs.putString((type + String(emptySlot)).c_str(), val);
             }
             prefs.end();
-            
-            request->send(200, "text/html", "Category Updated. Restarting...<script>setTimeout(()=>{window.location.href='/'}, 1000);</script>");
-            delay(500); ESP.restart();
+            loadCategoriesFromPrefs();
+            fn_refresh_roller(NULL);
+            request->redirect("/?msg=category_updated");
         }
     });
 }
