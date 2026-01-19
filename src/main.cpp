@@ -46,8 +46,10 @@ uint32_t idleTimeout = 60000;   // Default 1 min
 uint32_t sleepTimeout = 300000; // Default 5 min
 bool isScreenOn = true;
 
-BandRecord registeredBands[10];
+BandRecord registeredBands[50];
 int bandCount = 0;
+char ownersList[10][20]; 
+char locationsList[10][20];
 BandRecord tempRecord; 
 bool isWaitingForUID = false;
 bool isSuccessActive = false;
@@ -94,7 +96,11 @@ bool get_raw_touch(int16_t &x, int16_t &y) {
     delayMicroseconds(50); 
 
     // Attempt the read
-    uint8_t bytesReceived = Wire.requestFrom(0x15, 6);
+    uint8_t bytesReceived = Wire.requestFrom(0x15, 6, true);
+    if (bytesReceived != 6 || Wire.available() != 6) {
+        Wire.flush();          // ESP32-specific but safe
+        return false;
+    }
     
     if(bytesReceived == 6 && Wire.available() == 6) {
         uint8_t p = Wire.read(); 
@@ -330,11 +336,60 @@ void setup() {
     setCpuFrequencyMhz(240);
     Serial.begin(115200);
     prefs.begin("mbands", true);
-    int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 10) ? 0 : rc;
+    int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 50) ? 0 : rc;
     for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
+    
+    // Load category lists
+    for(int i=0; i<10; i++) {
+        String oKey = "o" + String(i);
+        String lKey = "l" + String(i);
+        
+        // Load Owners
+        if(prefs.isKey(oKey.c_str())) {
+            String val = prefs.getString(oKey.c_str(), "");
+            strncpy(ownersList[i], val.c_str(), 19);
+        } else {
+            memset(ownersList[i], 0, 20); // Force empty if key missing
+        }
+
+        // Load Locations
+        if(prefs.isKey(lKey.c_str())) {
+            String val = prefs.getString(lKey.c_str(), "");
+            strncpy(locationsList[i], val.c_str(), 19);
+        } else {
+            memset(locationsList[i], 0, 20); // Force empty if key missing
+        }
+    }
     prefs.end();
     
-    pinMode(TOUCH_RST, OUTPUT); digitalWrite(TOUCH_RST, LOW); delay(50); digitalWrite(TOUCH_RST, HIGH);
+    // --- I2C BUS RECOVERY (prevents SDA lockups) ---
+    pinMode(TOUCH_SDA, INPUT_PULLUP);
+    pinMode(TOUCH_SCL, OUTPUT);
+
+    for (int i = 0; i < 9; i++) {
+        digitalWrite(TOUCH_SCL, HIGH);
+        delayMicroseconds(5);
+        digitalWrite(TOUCH_SCL, LOW);
+        delayMicroseconds(5);
+    }
+
+    pinMode(TOUCH_SCL, INPUT_PULLUP);
+    delay(10);
+
+    // --- TOUCH RESET (safe sequencing) ---
+    pinMode(TOUCH_RST, OUTPUT);
+    digitalWrite(TOUCH_RST, LOW);
+    delay(20);
+
+    // Ensure bus is idle before releasing reset
+    pinMode(TOUCH_SDA, INPUT_PULLUP);
+    pinMode(TOUCH_SCL, INPUT_PULLUP);
+    delay(5);
+
+    digitalWrite(TOUCH_RST, HIGH);
+    delay(100);
+
+    // --- START I2C BUSES ---
     Wire.begin(TOUCH_SDA, TOUCH_SCL);
     I2C_NFC.begin(NFC_SDA, NFC_SCL, 100000);
     if(nfc.begin()) nfc.SAMConfig();

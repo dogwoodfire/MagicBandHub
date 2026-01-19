@@ -10,6 +10,9 @@ struct BandRecord {
     char name[20];
     char imageUrl[100];
     char type[20];
+    char dateBought[12]; // NEW: Stores YYYY-MM-DD
+    char owner[20];      // NEW: Stores selected owner name
+    char location[20];   // NEW: Stores selected location name
 };
 
 void initWebServer();

@@ -5,8 +5,10 @@
 #include <lvgl.h>
 #include "ui/ui.h"
 
-extern BandRecord registeredBands[10];
+extern BandRecord registeredBands[50];
 extern int bandCount;
+extern char ownersList[10][20];
+extern char locationsList[10][20];
 extern AsyncWebServer server;
 extern Preferences prefs;
 // NEW: Access the timeout variables from main.cpp
@@ -23,53 +25,102 @@ uint32_t hexToUint(String hex) {
 void initWebServer() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
-        // ... (Styles remain the same) ...
         html += "<style>body{font-family:sans-serif; text-align:center; background:#f4f4f9; padding:20px;} ";
-        html += ".card{background:white; border-radius:15px; padding:15px; margin:10px auto; max-width:350px; shadow: 2px 2px 10px #ccc;} ";
-        html += "input{margin:5px; padding:8px; border-radius:5px; border:1px solid #ccc; width:80%;} ";
+        html += ".card{background:white; border-radius:15px; padding:15px; margin:10px auto; max-width:350px; box-shadow: 2px 2px 10px #ccc;} ";
+        html += "input, select{margin:5px; padding:8px; border-radius:5px; border:1px solid #ccc; width:80%;} ";
         html += ".btn-search{background:#5765f2; color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; width:80%; margin-bottom:10px;} ";
         html += ".btn-save{background:#2ed573; color:white; border:none; padding:12px; width:80%; border-radius:8px; cursor:pointer;} ";
-        html += ".btn-del{background:#ff4757; color:white; border:none; padding:5px 10px; border-radius:5px; margin-top:15px; font-size:0.8em;}</style></head><body>";
+        html += ".btn-del{background:#ff4757; color:white; border:none; padding:5px 10px; border-radius:5px; margin-top:15px; font-size:0.8em;}</style>";
+        
+        // SEARCH FILTER SCRIPT
+        html += "<script>function filterBands() { var val = document.getElementById('search').value.toLowerCase();";
+        html += "var cards = document.getElementsByClassName('band-card');";
+        html += "for (var i=0; i<cards.length; i++) { var txt = cards[i].innerText.toLowerCase();";
+        html += "cards[i].style.display = txt.includes(val) ? '' : 'none'; }}</script></head><body>";
 
         if(WiFi.status() != WL_CONNECTED) {
-            html += "<h1>Hub Setup</h1><div class='card'><h3>Connect to Home WiFi</h3>";
-            html += "<form action='/setwifi' method='GET'>";
-            html += "SSID: <input type='text' name='ssid' placeholder='WiFi Name' required><br>";
-            html += "Pass: <input type='password' name='pass' placeholder='Password'><br><br>";
-            html += "<input type='submit' class='btn-save' value='Save & Connect Hub'></form></div>";
+            html += "<h1>Hub Setup</h1><div class='card'><h3>Connect WiFi</h3><form action='/setwifi' method='GET'>";
+            html += "SSID: <input type='text' name='ssid' required><br>Pass: <input type='password' name='pass'><br>";
+            html += "<input type='submit' class='btn-save' value='Save & Restart'></form></div>";
         } else {
             html += "<h1>MagicBand Hub</h1>";
             
-            // NEW: Hub Settings Card
+            // SEARCH BOX
+            html += "<input type='text' id='search' onkeyup='filterBands()' placeholder='Filter by Owner, Location, or Name...' style='width:90%; padding:15px; margin-bottom:20px;'>";
+
+            // CATEGORY MANAGER
+            html += "<div class='card'><h3>Manage Categories</h3>";
+            
+            // List existing Owners
+            html += "<b>Owners:</b><br>";
+            for(int i=0; i<10; i++) {
+                if(ownersList[i][0] != '\0') {
+                    html += String(ownersList[i]) + " <a href='/delcat?type=o&id=" + String(i) + "' style='color:red; font-size:0.8em;'>[Delete]</a><br>";
+                }
+            }
+            
+            // List existing Locations
+            html += "<br><b>Locations:</b><br>";
+            for(int i=0; i<10; i++) {
+                if(locationsList[i][0] != '\0') {
+                    html += String(locationsList[i]) + " <a href='/delcat?type=l&id=" + String(i) + "' style='color:red; font-size:0.8em;'>[Delete]</a><br>";
+                }
+            }
+
+            // Add New Form
+            html += "<hr><form action='/addcat' method='GET'>";
+            html += "<input type='text' name='val' placeholder='New Name' required><br>";
+            html += "<select name='type'><option value='o'>Owner</option><option value='l'>Location</option></select><br>";
+            html += "<input type='submit' class='btn-save' value='Add Category'></form></div>";
+
+            // HUB SETTINGS
             html += "<div class='card'><h3>Hub Settings</h3><form action='/settings' method='GET'>";
             html += "Standby (Min): <input type='number' name='idle' value='" + String(idleTimeout / 60000) + "' min='1'><br>";
-            html += "Screen Off (Min): <input type='number' name='sleep' value='" + String(sleepTimeout / 60000) + "' min='1'><br>";
-            html += "<input type='submit' class='btn-save' value='Save Hub Settings'></form></div>";
-            if(bandCount == 0) html += "<p>No bands saved. Scan one on the hub!</p>";
+            html += "Sleep (Min): <input type='number' name='sleep' value='" + String(sleepTimeout / 60000) + "' min='1'><br>";
+            html += "<input type='submit' class='btn-save' value='Save Settings'></form></div>";
+
+            // BAND CARDS
             for(int i=0; i < bandCount; i++) {
                 char hStr[8]; sprintf(hStr, "#%06X", (unsigned int)registeredBands[i].color);
-                html += "<div class='card'><h3>" + String(registeredBands[i].name) + "</h3>";
-                
-                // NEW: Hardware Type Display
+                html += "<div class='card band-card'><h3>" + String(registeredBands[i].name) + "</h3>";
                 html += "<p style='color:#666; font-size:0.8em; margin-top:-10px;'>Type: " + String(registeredBands[i].type) + "</p>";
 
-                if(strlen(registeredBands[i].imageUrl) > 5) {
-                    html += "<img src='" + String(registeredBands[i].imageUrl) + "' style='width:100px; border-radius:8px;'><br>";
-                }
+                if(strlen(registeredBands[i].imageUrl) > 5) html += "<img src='" + String(registeredBands[i].imageUrl) + "' style='width:100px; border-radius:8px;'><br>";
+                
                 html += "<form action='/update' method='GET'><input type='hidden' name='id' value='" + String(i) + "'>";
                 html += "Name: <input type='text' name='name' id='n"+String(i)+"' value='" + String(registeredBands[i].name) + "' maxlength='19'><br>";
-                html += "<button type='button' class='btn-search' onclick=\"window.open('https://www.magicbandcollectors.com/checklist/?search=' + encodeURIComponent(document.getElementById('n"+String(i)+"').value))\">Find Image Online</button><br>";
-                html += "Img URL: <input type='text' name='img' value='" + String(registeredBands[i].imageUrl) + "' placeholder='Paste .jpg link'><br>";
+                html += "Bought: <input type='date' name='date' value='" + String(registeredBands[i].dateBought) + "'><br>";
+                
+                // OWNER DROPDOWN
+                html += "Owner: <select name='owner'><option value=''>None</option>";
+                for(int j=0; j<10; j++) {
+                    if(ownersList[j][0] != '\0') { // Check if slot is not empty
+                        String sel = (String(registeredBands[i].owner) == String(ownersList[j])) ? "selected" : "";
+                        html += "<option value='" + String(ownersList[j]) + "' " + sel + ">" + String(ownersList[j]) + "</option>";
+                    }
+                }
+                html += "</select><br>";
+
+                // LOCATION DROPDOWN
+                html += "Location: <select name='loc'><option value=''>None</option>";
+                for(int k=0; k<10; k++) {
+                    if(locationsList[k][0] != '\0') { // Check if slot is not empty
+                        String sel = (String(registeredBands[i].location) == String(locationsList[k])) ? "selected" : "";
+                        html += "<option value='" + String(locationsList[k]) + "' " + sel + ">" + String(locationsList[k]) + "</option>";
+                    }
+                }
+                html += "</select><br>";
+
+                html += "Img URL: <input type='text' name='img' value='" + String(registeredBands[i].imageUrl) + "' placeholder='jpg link'><br>";
                 html += "Color: <input type='color' name='color' value='" + String(hStr) + "' style='width:40px;'><br>";
                 html += "<input type='submit' value='Save Changes' class='btn-save'></form>";
-                html += "<form action='/delete' method='GET' onsubmit='return confirm(\"Delete Band?\")'><input type='hidden' name='id' value='" + String(i) + "'><input type='submit' value='Delete Band' class='btn-del'></form></div>";
+                html += "<form action='/delete' method='GET' onsubmit='return confirm(\"Delete?\")'><input type='hidden' name='id' value='" + String(i) + "'><input type='submit' value='Delete Band' class='btn-del'></form></div>";
             }
         }
         html += "</body></html>";
         request->send(200, "text/html", html);
     });
 
-    // NEW: Route to handle saving settings
     server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
         if(request->hasParam("idle")) idleTimeout = request->getParam("idle")->value().toInt() * 60000;
         if(request->hasParam("sleep")) sleepTimeout = request->getParam("sleep")->value().toInt() * 60000;
@@ -87,8 +138,12 @@ void initWebServer() {
             int id = request->getParam("id")->value().toInt();
             if(id < bandCount) {
                 if(request->hasParam("name")) strncpy(registeredBands[id].name, request->getParam("name")->value().c_str(), 19);
+                if(request->hasParam("date")) strncpy(registeredBands[id].dateBought, request->getParam("date")->value().c_str(), 11);
+                if(request->hasParam("owner")) strncpy(registeredBands[id].owner, request->getParam("owner")->value().c_str(), 19);
+                if(request->hasParam("loc")) strncpy(registeredBands[id].location, request->getParam("loc")->value().c_str(), 19);
                 if(request->hasParam("color")) registeredBands[id].color = hexToUint(request->getParam("color")->value());
                 if(request->hasParam("img")) strncpy(registeredBands[id].imageUrl, request->getParam("img")->value().c_str(), 99);
+                
                 prefs.begin("mbands", false);
                 prefs.putBytes(("b" + String(id)).c_str(), &registeredBands[id], sizeof(BandRecord));
                 prefs.end();
@@ -123,6 +178,48 @@ void initWebServer() {
             prefs.end();
             request->send(200, "text/html", "Restarting...");
             delay(2000); ESP.restart();
+        }
+    });
+
+    // ROUTE: Delete Category
+    server.on("/delcat", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasParam("type") && request->hasParam("id")){
+            String type = request->getParam("type")->value();
+            String key = type + request->getParam("id")->value();
+            
+            prefs.begin("mbands", false);
+            prefs.remove(key.c_str()); // Permanently delete from memory
+            prefs.end();
+            
+            request->send(200, "text/html", "Category Deleted. Restarting...<script>setTimeout(()=>{window.location.href='/'}, 1000);</script>");
+            delay(500); ESP.restart();
+        }
+    });
+
+    // ROUTE: Add Category (Improved to prevent duplicates)
+    server.on("/addcat", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasParam("val") && request->hasParam("type")){
+            String val = request->getParam("val")->value();
+            String type = request->getParam("type")->value();
+            
+            prefs.begin("mbands", false);
+            bool alreadyExists = false;
+            int emptySlot = -1;
+
+            for(int i=0; i<10; i++) {
+                String key = type + String(i);
+                String current = prefs.getString(key.c_str(), "");
+                if (current == val) alreadyExists = true;
+                if (current == "" && emptySlot == -1) emptySlot = i;
+            }
+
+            if(!alreadyExists && emptySlot != -1) {
+                prefs.putString((type + String(emptySlot)).c_str(), val);
+            }
+            prefs.end();
+            
+            request->send(200, "text/html", "Category Updated. Restarting...<script>setTimeout(()=>{window.location.href='/'}, 1000);</script>");
+            delay(500); ESP.restart();
         }
     });
 }
