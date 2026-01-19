@@ -210,18 +210,18 @@ void handleSuccess(uint32_t color) {
             int b=255-(i*50); if(b<0) b=0;
             strip.setPixelColor(p, strip.Color(b, b, b)); 
         }
-        strip.show(); delay(SPEED_COMET); lv_timer_handler();
+        strip.show(); delay(SPEED_COMET); lv_timer_handler(); delay(1);   
     }
     // STAGE 2: Progressive Fill (White, 1 to 12)
     strip.clear();
     for(int i=0; i < LED_COUNT; i++) {
         strip.setPixelColor(i, strip.Color(255, 255, 255));
-        strip.show(); delay(SPEED_FILL); lv_timer_handler();
+        strip.show(); delay(SPEED_FILL); lv_timer_handler(); delay(1);
     }
     // STAGE 3: Pulse Breathing Fade (Band Color)
     for(int pulse = 0; pulse < 2; pulse++){
-        for(int b = 30; b <= 255; b += 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); }
-        for(int b = 255; b >= 30; b -= 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); }
+        for(int b = 30; b <= 255; b += 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); delay(1);}
+        for(int b = 255; b >= 30; b -= 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); delay(1);}
     }
     if(ui_mickeyScanner) lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 0, 0);
     strip.clear(); strip.setBrightness(40); strip.show();
@@ -308,7 +308,8 @@ extern "C" {
                     }
                 } while (found);
                 
-                strncpy(registeredBands[bandCount].name, candidateName, 19);
+                strncpy(registeredBands[bandCount].name, candidateName, sizeof(registeredBands[bandCount].name) - 1);
+                registeredBands[bandCount].name[sizeof(registeredBands[bandCount].name) - 1] = '\0';
                 // ------------------------------------
 
                 // Hardware Detection for the new record
@@ -358,7 +359,7 @@ extern "C" {
     }
     void fn_toggle_wifi(lv_event_t * e) {
         if (!isWiFiActive) { 
-            WiFi.mode(WIFI_AP); WiFi.softAP("MagicBand-Hub", "password123"); startWebServer(); isWiFiActive = true; 
+            WiFi.mode(WIFI_AP); WiFi.softAP("MagicBand-Hub", "password123"); WiFi.setSleep(false); startWebServer(); isWiFiActive = true; 
             if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Hotspot Active");
         } else { 
             stopWebServer(); WiFi.softAPdisconnect(true); isWiFiActive = false; 
@@ -452,6 +453,7 @@ void setup() {
     initWebServer(); 
     if (tryConnectSavedWiFi()) { 
         isWiFiActive = true; 
+        WiFi.setSleep(false);
         startWebServer(); 
         if(ui_StatusLabel) {
             String msg = "Connected to: " + WiFi.SSID();
@@ -531,7 +533,8 @@ void loop() {
                         }
                     }
                 } while (found);
-                strncpy(registeredBands[bandCount].name, candidateName, 19);
+                strncpy(registeredBands[bandCount].name, candidateName, sizeof(registeredBands[bandCount].name) - 1);
+                registeredBands[bandCount].name[sizeof(registeredBands[bandCount].name) - 1] = '\0';
                 // ------------------------------------
 
                 strncpy(registeredBands[bandCount].type, style.c_str(), 19);
