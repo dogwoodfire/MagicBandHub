@@ -21,9 +21,41 @@ extern uint32_t sleepTimeout;
 
 extern "C" void fn_refresh_roller(lv_event_t * e);
 
+// Screen-less web-driven scan/register (implemented in main.cpp)
+extern "C" void web_arm_scan();
+extern "C" void web_cancel_scan();
+extern "C" bool web_has_scan_result();
+extern "C" bool web_scan_result_is_known();
+extern "C" int  web_scan_known_index();
+extern "C" void web_scan_uid_string(char *out, size_t outSize);
+extern "C" void web_scan_type_string(char *out, size_t outSize);
+extern "C" bool web_pending_new_band();
+extern "C" int  web_confirm_save_pending_new(bool yes);
+
 uint32_t hexToUint(String hex) {
     if(hex.startsWith("#")) hex = hex.substring(1);
     return (uint32_t) strtol(hex.c_str(), NULL, 16);
+}
+
+// HTML escape helper for safe output in attributes and text
+static String htmlEscape(const String &in) {
+    String s = in;
+    s.replace("&", "&amp;");
+    s.replace("<", "&lt;");
+    s.replace(">", "&gt;");
+    s.replace("\"", "&quot;");
+    s.replace("'", "&#39;");
+    return s;
+}
+
+// JSON escape helper for small JSON responses
+static String jsonEscape(const String &in) {
+    String s = in;
+    s.replace("\\", "\\\\");
+    s.replace("\"", "\\\"");
+    s.replace("\n", " ");
+    s.replace("\r", " ");
+    return s;
 }
 
 static String extractMetaContent(const String &html, const String &needle) {
@@ -383,21 +415,29 @@ static bool fetchMagicBandCollectors(int listingId, String &outTitle, String &ou
 
 void initWebServer() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
-        html += "<style>body{font-family:sans-serif; text-align:center; background:#f4f4f9; padding:20px;} ";
+        String html = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+        html += "<style>body{font-family:sans-serif; text-align:center; background:#3677A3; padding:20px;} ";
+        html += "h1{color:#fff; font-weight:800; margin:10px 0 18px 0;} ";
         html += ".card{background:white; border-radius:15px; padding:15px; margin:10px auto; max-width:350px; box-shadow: 2px 2px 10px #ccc;} ";
         html += ".summary{display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;} ";
         html += ".summary-left{display:flex; align-items:center; gap:10px; text-align:left;} ";
-        html += ".thumb{width:110px; height:90px; object-fit:contain; border-radius:10px; background:#fff; box-sizing:border-box; padding-top:5px;} ";
+        html += ".thumb{width:110px; height:180px; object-fit:contain; object-position:top center; border-radius:10px; background:#fff; box-sizing:border-box; padding:10px; display:block;} ";
         html += ".thumb{border:1px solid #e6e6e6;} ";
         html += ".settings-header{cursor:pointer; font-weight:bold; padding:10px;} .settings-body{display:none; text-align:left;} ";
         html += ".meta{color:#666; font-size:0.8em;} ";
-        html += ".details{margin-top:10px; text-align:left;} ";
-        html += "input, select{margin:5px; padding:8px; border-radius:5px; border:1px solid #ccc; width:80%;} ";
+        html += ".details{margin-top:12px; text-align:left;} ";
+        html += "input, select{margin:0; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box; max-width:100%;} ";
         html += ".btn-search{background:#5765f2; color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; width:80%; margin-bottom:10px;} ";
         html += ".btn-save{background:#2ed573; color:white; border:none; padding:12px; width:80%; border-radius:8px; cursor:pointer;} ";
         html += ".btn-del{background:#ff4757; color:white; border:none; padding:5px 10px; border-radius:5px; font-size:0.8em; display:inline-block; text-decoration:none;} ";
         html += ".btn-del:active{opacity:0.9;} ";
+        html += ".details{margin-top:12px; text-align:left;} ";
+        html += ".section{margin-top:18px; padding-top:12px; border-top:1px solid #eee;} ";
+        html += ".section-title{font-size:0.85em; font-weight:600; color:#666; margin-bottom:10px;} ";
+        html += ".field{margin-bottom:12px;} ";
+        html += ".field label{display:block; font-size:0.8em; color:#555; margin-bottom:4px;} ";
+        html += ".field input, .field select{width:100%; max-width:100%; display:block;} ";
+        html += ".btn-secondary{background:#eef1ff; color:#3b4ce2; border:none; padding:10px; width:100%; border-radius:8px; cursor:pointer; margin-top:6px;} ";
         html += "</style>";
         
         // SEARCH FILTER SCRIPT
@@ -406,7 +446,20 @@ void initWebServer() {
         html += "for (var i=0; i<cards.length; i++) { var txt = cards[i].innerText.toLowerCase();";
         html += "cards[i].style.display = txt.includes(val) ? '' : 'none'; }}";
         html += "function toggleDetails(id){ var el=document.getElementById('d'+id); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
+        // Auto-open band card from ?open= param on load
+        html += "window.addEventListener('load', function(){ try{ var p=new URLSearchParams(window.location.search); var open=p.get('open'); if(open!==null){ var id=parseInt(open,10); if(!isNaN(id)){ toggleDetails(id); var el=document.getElementById('d'+id); if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); } } } }catch(e){} });";
         html += "function toggleSettings(){ var el=document.getElementById('settings'); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
+                // Screen-less scan/register helpers
+        html += "let __scanPoll=null;";
+        html += "function armScan(){ fetch('/scan_arm?ajax=1').then(()=>{ showScanArmed(); startScanPoll(); }).catch(()=>{}); }";
+        html += "function startScanPoll(){ if(__scanPoll) return; __scanPoll=setInterval(pollScan, 700); pollScan(); }";
+        html += "function stopScanPoll(){ if(__scanPoll){ clearInterval(__scanPoll); __scanPoll=null; } }";
+        html += "function showScanArmed(){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Tap a band to the reader...'; body.innerHTML='<div style=\"padding:10px;border:1px dashed #ccc;border-radius:10px;\">Waiting for a band...</div>'; }";
+        html += "function showScanKnown(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Known band detected'; var img=''; if(d.img){ img='<img src=\"'+d.img+'\" style=\"width:160px;border-radius:10px;display:block;margin:10px auto;background:#fff;padding:10px;box-sizing:border-box;border:1px solid #e6e6e6;\">'; } body.innerHTML= img + '<div style=\"font-weight:800;\">'+(d.name||'Known band')+'</div><div class=\"meta\">'+(d.type||'')+'</div><button class=\"btn-secondary\" style=\"margin-top:10px;\" onclick=\"openBand('+d.knownIndex+');return false;\">Open / Edit</button>'; stopScanPoll(); }";
+        html += "function showScanNew(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='New band detected'; body.innerHTML='<div style=\"font-weight:800;\">New band</div><div class=\"meta\">'+(d.uid||'')+' &nbsp;'+(d.type||'')+'</div><div style=\"display:flex;gap:10px;margin-top:10px;\"><button class=\"btn-save\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(1);return false;\">Yes, save</button><button class=\"btn-del\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(0);return false;\">No</button></div>'; }";
+        html += "function confirmSave(yes){ fetch('/scan_confirm?yes='+yes+'&ajax=1').then(r=>r.json()).then(d=>{ if(d && d.saved && d.openId>=0){ window.location='/?msg=scan_saved&open='+d.openId; } else { window.location='/?msg=scan_cancel'; } }).catch(()=>{ window.location='/?msg=scan_cancel'; }); }";
+        html += "function openBand(id){ window.location='/?open='+id; }";
+        html += "function pollScan(){ fetch('/scan_status').then(r=>r.json()).then(d=>{ if(!d||!d.state) return; if(d.state==='known'){ showScanKnown(d); } else if(d.state==='new'){ showScanNew(d); } else if(d.state==='armed'){ showScanArmed(); } }).catch(()=>{}); }";
         html += "</script></head><body>";
 
         if(request->hasParam("msg")) {
@@ -418,8 +471,18 @@ void initWebServer() {
                 // one-time refresh back to the open card (no msg param)
                 String openId = request->hasParam("open") ? request->getParam("open")->value() : "0";
                 html += "<meta http-equiv='refresh' content='2;url=/?open=" + openId + "'>";
+            } else if(msg == "saved") {
+                html += "<div class='card' style='background:#d4edda;color:#155724;'>Saved &#10003;</div>";
+            } else if(msg == "lookup_busy") {
+                html += "<div class='card' style='background:#fff3cd;color:#856404;'>A lookup is already running. Please wait and refresh.</div>";
             } else if(msg == "lookup_fail") {
                 html += "<div class='card' style='background:#f8d7da;color:#721c24;'>Could not fetch listing details. Check the ID and Wi-Fi.</div>";
+            } else if(msg == "scan_armed") {
+                html += "<div class='card' style='background:#d1ecf1;color:#0c5460;'>Ready to scan. Tap a band to the reader&#8230;</div>";
+            } else if(msg == "scan_saved") {
+                html += "<div class='card' style='background:#d4edda;color:#155724;'>Band saved &#10003;</div>";
+            } else if(msg == "scan_cancel") {
+                html += "<div class='card' style='background:#fff3cd;color:#856404;'>Scan cancelled.</div>";
             }
         }
 
@@ -442,6 +505,16 @@ void initWebServer() {
             html += "<input type='submit' class='btn-save' value='Save & Restart'></form></div>";
         } else {
             html += "<h1>MagicBand Hub</h1>";
+
+            // SCREEN-LESS REGISTER / SCAN CARD
+            html += "<div class='card' id='scanCard' style='text-align:left;'>";
+            html += "<div style='display:flex; align-items:center; justify-content:space-between; gap:10px;'>";
+            html += "<div style='font-weight:800; color:#1f2d3d;'>Register Band</div>";
+            html += "<button class='btn-secondary' style='width:auto; padding:10px 14px;' onclick='armScan(); return false;'>Start</button>";
+            html += "</div>";
+            html += "<div class='meta' id='scanHint' style='margin-top:6px;'>Start a scan from the browser (screen-less mode). LEDs will swirl until a band is detected.</div>";
+            html += "<div id='scanBody' style='margin-top:10px; display:none;'></div>";
+            html += "</div>";
             
             // SEARCH BOX
             html += "<input type='text' id='search' onkeyup='filterBands()' placeholder='Filter by Owner, Location, or Name...' style='width:90%; padding:15px; margin-bottom:20px;'>";
@@ -454,6 +527,19 @@ void initWebServer() {
 
                 String ownerStr = (strlen(registeredBands[i].owner) > 0) ? String(registeredBands[i].owner) : String("None");
                 String locStr   = (strlen(registeredBands[i].location) > 0) ? String(registeredBands[i].location) : String("None");
+                String escName  = htmlEscape(String(registeredBands[i].name));
+                String escOwner = htmlEscape(ownerStr);
+                String escLoc   = htmlEscape(locStr);
+                String escType  = htmlEscape(String(registeredBands[i].type));
+                String escImg   = htmlEscape(String(registeredBands[i].imageUrl));
+                String escMbc   = htmlEscape(String(registeredBands[i].mbcListing));
+                String escRtype = htmlEscape(String(registeredBands[i].releaseType));
+                String escRdate = htmlEscape(String(registeredBands[i].releaseDate));
+                String escRat   = htmlEscape(String(registeredBands[i].releasedAt));
+                String escBcol  = htmlEscape(String(registeredBands[i].bandColorName));
+                String escIcol  = htmlEscape(String(registeredBands[i].iconColorName));
+                String escOp    = htmlEscape(String(registeredBands[i].originalPrice));
+                String escSku   = htmlEscape(String(registeredBands[i].sku));
 
                 html += "<div class='card band-card'>";
 
@@ -461,14 +547,14 @@ void initWebServer() {
                 html += "<div class='summary' onclick='toggleDetails(" + String(i) + ")'>";
                 html += "<div class='summary-left'>";
                 if(strlen(registeredBands[i].imageUrl) > 5) {
-                    html += "<img class='thumb' src='" + String(registeredBands[i].imageUrl) + "'>";
+                    html += "<img class='thumb' src='" + escImg + "'>";
                 } else {
                     html += "<div class='thumb'></div>";
                 }
                 html += "<div>";
-                html += "<div><b>" + String(registeredBands[i].name) + "</b></div>";
-                html += "<div class='meta'>Owner: " + ownerStr + " &nbsp;|&nbsp; Location: " + locStr + "</div>";
-                html += "<div class='meta'>Type: " + String(registeredBands[i].type) + "</div>";
+                html += "<div><b>" + escName + "</b></div>";
+                html += "<div class='meta'>Owner: " + escOwner + " &nbsp;|&nbsp; Location: " + escLoc + "</div>";
+                html += "<div class='meta'>Type: " + escType + "</div>";
                 html += "</div></div>";
                 html += "<div class='meta'>Tap to edit</div>";
                 html += "</div>";
@@ -478,54 +564,68 @@ void initWebServer() {
 
                 // Larger image preview (optional)
                 if(strlen(registeredBands[i].imageUrl) > 5) {
-                    html += "<img src='" + String(registeredBands[i].imageUrl) + "' style='width:120px; border-radius:10px; display:block; margin:10px auto;'><br>";
+                    html += "<img src='" + escImg + "' style='width:160px; border-radius:10px; display:block; margin:10px auto; background:#fff; padding:10px; box-sizing:border-box; border:1px solid #e6e6e6;'><br>";
                 }
 
                 html += "<form action='/update' method='GET'><input type='hidden' name='id' value='" + String(i) + "'>";
-                html += "Name: <input type='text' name='name' value='" + String(registeredBands[i].name) + "' maxlength='39'><br>";
-                html += "Bought: <input type='date' name='date' value='" + String(registeredBands[i].dateBought) + "'><br>";
-
+                // General Section
+                html += "<div class='section'>";
+                html += "<div class='section-title'>General</div>";
+                html += "<div class='field'><label>Name</label><input type='text' name='name' value='" + escName + "' maxlength='39'></div>";
+                html += "<div class='field'><label>Bought</label><input type='date' name='date' value='" + String(registeredBands[i].dateBought) + "'></div>";
                 // OWNER DROPDOWN
-                html += "Owner: <select name='owner'><option value=''>None</option>";
+                html += "<div class='field'><label>Owner</label><select name='owner'><option value=''>None</option>";
                 for(int j=0; j<10; j++) {
                     if(ownersList[j][0] != '\0') {
+                        String opt = htmlEscape(String(ownersList[j]));
                         String sel = (String(registeredBands[i].owner) == String(ownersList[j])) ? "selected" : "";
-                        html += "<option value='" + String(ownersList[j]) + "' " + sel + ">" + String(ownersList[j]) + "</option>";
+                        html += "<option value='" + opt + "' " + sel + ">" + opt + "</option>";
                     }
                 }
-                html += "</select><br>";
-
+                html += "</select></div>";
                 // LOCATION DROPDOWN
-                html += "Location: <select name='loc'><option value=''>None</option>";
+                html += "<div class='field'><label>Location</label><select name='loc'><option value=''>None</option>";
                 for(int k=0; k<10; k++) {
                     if(locationsList[k][0] != '\0') {
+                        String opt = htmlEscape(String(locationsList[k]));
                         String sel = (String(registeredBands[i].location) == String(locationsList[k])) ? "selected" : "";
-                        html += "<option value='" + String(locationsList[k]) + "' " + sel + ">" + String(locationsList[k]) + "</option>";
+                        html += "<option value='" + opt + "' " + sel + ">" + opt + "</option>";
                     }
                 }
-                html += "</select><br>";
-
-                html += "Img URL: <input type='text' name='img' value='" + String(registeredBands[i].imageUrl) + "' placeholder='jpg link'><br>";
-
-                // MagicBandCollectors fetch (runs async)
-                html += "MBC Listing: <input type='text' name='mbc' value='" + String(registeredBands[i].mbcListing) + "' placeholder='2535 or full URL' style='width:80%;'><br>";
-                html += "<button type='submit' formaction='/lookup' formmethod='GET' class='btn-search'>Fetch from MagicBandCollectors</button><br>";
-
-                // Imported metadata (editable)
-                html += "Release: <input type='text' name='rtype' value='" + String(registeredBands[i].releaseType) + "' placeholder='Limited Release'><br>";
-                html += "Release Date: <input type='text' name='rdate' value='" + String(registeredBands[i].releaseDate) + "' placeholder='July 28, 2025'><br>";
-                html += "Released At: <input type='text' name='rat' value='" + String(registeredBands[i].releasedAt) + "' placeholder='Disneyland, WDW, ShopDisney'><br>";
-                html += "Band Color: <input type='text' name='bcol' value='" + String(registeredBands[i].bandColorName) + "' placeholder='Black'><br>";
-                html += "Icon Color: <input type='text' name='icol' value='" + String(registeredBands[i].iconColorName) + "' placeholder='Custom Graphics'><br>";
-                html += "Original Price: <input type='text' name='op' value='" + String(registeredBands[i].originalPrice) + "' placeholder='$54.99'><br>";
-                html += "SKU / Barcode: <input type='text' name='sku' value='" + String(registeredBands[i].sku) + "' placeholder='400..., 419...'><br>";
-
-                html += "Color: <input type='color' name='color' value='" + String(hStr) + "' style='width:40px;'><br>";
-                html += "<input type='submit' value='Save Changes' class='btn-save'></form>";
-
+                html += "</select></div>";
+                html += "</div>";
+                // MagicBandCollectors Section
+                html += "<div class='section'>";
+                html += "<div class='section-title'>MagicBandCollectors</div>";
+                html += "<div class='field'><label>MagicBandCollectors.com Listing</label><input type='text' name='mbc' value='" + escMbc + "' placeholder='2535 or full URL'></div>";
+                html += "<button type='submit' formaction='/lookup' formmethod='GET' class='btn-secondary'>Fetch from MagicBandCollectors</button>";
+                html += "</div>";
+                // Imported Metadata Section
+                html += "<div class='section'>";
+                html += "<div class='section-title'>Imported Metadata</div>";
+                html += "<div class='field'><label>Image URL</label><input type='text' name='img' value='" + escImg + "' placeholder='.jpg link'></div>";
+                html += "<div class='field'><label>Release</label><input type='text' name='rtype' value='" + escRtype + "'></div>";
+                html += "<div class='field'><label>Release Date</label><input type='text' name='rdate' value='" + escRdate + "'></div>";
+                html += "<div class='field'><label>Sold locations</label><input type='text' name='rat' value='" + escRat + "'></div>";
+                html += "<div class='field'><label>Band Color</label><input type='text' name='bcol' value='" + escBcol + "'></div>";
+                html += "<div class='field'><label>Icon Color</label><input type='text' name='icol' value='" + escIcol + "'></div>";
+                html += "<div class='field'><label>Original Price</label><input type='text' name='op' value='" + escOp + "'></div>";
+                html += "<div class='field'><label>SKU / Barcode</label><input type='text' name='sku' value='" + escSku + "'></div>";
+                html += "</div>";
+                // Appearance Section
+                html += "<div class='section'>";
+                html += "<div class='section-title'>Appearance</div>";
+                html += "<div class='field'><label>Scanning Lights Colour</label><input type='color' name='color' value='" + String(hStr) + "' style='width:60px;'></div>";
+                html += "<input type='submit' value='Save Changes' class='btn-save'>";
+                html += "</div>";
+                html += "</form>";
+                // Danger Zone Section
+                html += "<div class='section'>";
+                html += "<div class='section-title'>Danger Zone</div>";
                 html += "<form action='/delete' method='GET' onsubmit='return confirm(\"Delete?\")'>";
                 html += "<input type='hidden' name='id' value='" + String(i) + "'>";
                 html += "<input type='submit' value='Delete Band' class='btn-del'></form>";
+                html += "</div>";
 
                 html += "</div>"; // details
                 html += "</div>"; // card
@@ -589,7 +689,7 @@ void initWebServer() {
             html += "</div></div>";
         }
         html += "</body></html>";
-        request->send(200, "text/html", html);
+        request->send(200, "text/html; charset=utf-8", html);
     });
 
     server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -602,6 +702,83 @@ void initWebServer() {
         prefs.end();
         
         request->redirect("/");
+    });
+
+    // ROUTE: Arm a web-driven scan (screen-less register)
+    server.on("/scan_arm", HTTP_GET, [](AsyncWebServerRequest *request){
+        web_arm_scan();
+        if(request->hasParam("ajax")) {
+            request->send(200, "text/plain", "OK");
+        } else {
+            request->redirect("/?msg=scan_armed");
+        }
+    });
+
+    // ROUTE: Poll scan status (JSON)
+    server.on("/scan_status", HTTP_GET, [](AsyncWebServerRequest *request){
+        char uidBuf[32]; uidBuf[0] = '\0';
+        char typeBuf[24]; typeBuf[0] = '\0';
+        web_scan_uid_string(uidBuf, sizeof(uidBuf));
+        web_scan_type_string(typeBuf, sizeof(typeBuf));
+
+        String state = "idle";
+        if(web_pending_new_band()) {
+            state = "new";
+        } else if(web_has_scan_result() && web_scan_result_is_known()) {
+            state = "known";
+        } else if(web_has_scan_result() && !web_scan_result_is_known()) {
+            state = "new";
+        } else {
+            // No result yet: if user armed scan, show armed unless nothing is set at all
+            if(String(uidBuf).length() == 0 && String(typeBuf).length() == 0) state = "armed";
+        }
+
+        int kidx = web_scan_known_index();
+
+        String name = "";
+        String img  = "";
+        String type = String(typeBuf);
+        if(state == "known" && kidx >= 0 && kidx < bandCount) {
+            name = String(registeredBands[kidx].name);
+            img  = String(registeredBands[kidx].imageUrl);
+            type = String(registeredBands[kidx].type);
+        }
+
+        String json = "{";
+        json += "\"state\":\"" + jsonEscape(state) + "\",";
+        json += "\"uid\":\"" + jsonEscape(String(uidBuf)) + "\",";
+        json += "\"type\":\"" + jsonEscape(type) + "\",";
+        json += "\"knownIndex\":" + String(kidx) + ",";
+        json += "\"name\":\"" + jsonEscape(name) + "\",";
+        json += "\"img\":\"" + jsonEscape(img) + "\"";
+        json += "}";
+        request->send(200, "application/json", json);
+    });
+
+    // ROUTE: Confirm saving a newly scanned band (yes/no)
+    server.on("/scan_confirm", HTTP_GET, [](AsyncWebServerRequest *request){
+        bool yes = false;
+        if(request->hasParam("yes")) {
+            String yesStr = request->getParam("yes")->value();
+            yes = (yesStr == "1" || yesStr.equalsIgnoreCase("true") || yesStr.equalsIgnoreCase("yes"));
+        }
+
+        int newIdx = web_confirm_save_pending_new(yes);
+
+        if(request->hasParam("ajax")) {
+            String json = "{";
+            json += "\"saved\":" + String((newIdx >= 0) ? "true" : "false") + ",";
+            json += "\"openId\":" + String(newIdx);
+            json += "}";
+            request->send(200, "application/json", json);
+            return;
+        }
+
+        if(newIdx >= 0) {
+            request->redirect("/?msg=scan_saved&open=" + String(newIdx));
+        } else {
+            request->redirect("/?msg=scan_cancel");
+        }
     });
 
     server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -666,7 +843,8 @@ void initWebServer() {
                 fn_refresh_roller(NULL); 
             }
         }
-        request->redirect("/");
+        String openId = request->hasParam("id") ? request->getParam("id")->value() : "0";
+        request->redirect("/?msg=saved&open=" + openId);
     });
 
     // ROUTE: Lookup MagicBandCollectors listing and apply to a band (runs in background task)
@@ -706,7 +884,7 @@ void initWebServer() {
 
         if(g_lookupInProgress) {
             g_lookupResult = 3; // busy
-            request->redirect("/?msg=lookup_fail");
+            request->redirect("/?msg=lookup_busy&open=" + String(id));
             return;
         }
 
@@ -721,7 +899,7 @@ void initWebServer() {
         // Run on core 1 so async_tcp (often core 0) stays responsive
         xTaskCreatePinnedToCore(mbcLookupTask, "mbcLookupTask", 8192, job, 1, NULL, 1);
 
-        request->redirect("/?msg=lookup_ok");
+        request->redirect("/?msg=lookup_ok&open=" + String(id));
     });
 
     server.on("/delete", HTTP_GET, [](AsyncWebServerRequest *request){

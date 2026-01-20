@@ -81,10 +81,26 @@ void loadCategoriesFromPrefs() {
     prefs.end();
 }
 
+
 BandRecord tempRecord; 
 bool isWaitingForUID = false;
 bool isSuccessActive = false;
 bool isWiFiActive = false;
+
+// ---------------- Web-controlled scan/register (screen-less mode) ----------------
+volatile bool g_webScanArmed = false;        // web requested a scan
+volatile bool g_webScanHasResult = false;    // a tag was seen while armed
+volatile bool g_webScanIsKnown = false;      // result matched a registered band
+volatile int  g_webScanKnownIndex = -1;      // index if known, else -1
+volatile uint8_t g_webScanUidLen = 0;        // UID length
+volatile uint8_t g_webScanUid[10] = {0};     // UID bytes (up to 10)
+char g_webScanUidStr[32] = {0};              // "04:AA:..." string
+char g_webScanTypeStr[24] = {0};             // "MagicBand+" etc.
+
+// When a new band is awaiting user confirmation in the web UI, we keep it here.
+volatile bool g_webPendingNew = false;
+BandRecord g_webPendingRecord;               // staged record (not yet saved)
+// -------------------------------------------------------------------------------
 
 extern "C" {
     extern lv_obj_t * ui_Scanner, * ui_mickeyScanner, * ui_ScanBandPnl3, * ui_BandRoller, * ui_RegisterConfirmPnl, * ui_NewBandConfirm, * ui_StatusLabel, * ui_EditNameLabel, * ui_StandbyScreen, * ui_clock, * ui_Hotspot;
@@ -128,7 +144,7 @@ bool get_raw_touch(int16_t &x, int16_t &y) {
     delayMicroseconds(50); 
 
     // Attempt the read
-    uint8_t bytesReceived = Wire.requestFrom(0x15, 6, true);
+    uint8_t bytesReceived = Wire.requestFrom((uint8_t)0x15, (size_t)6, (bool)true);
     if (bytesReceived != 6 || Wire.available() != 6) {
         Wire.flush(); // ESP32-specific
 
@@ -283,6 +299,109 @@ void autoSetTimezone() {
     http.end();
 }
 
+static void formatUidString(const uint8_t *uid, uint8_t len, char *out, size_t outSize) {
+    if(!out || outSize < 4) return;
+    out[0] = '\0';
+    for(uint8_t i=0; i<len && (i*3+2) < outSize; i++) {
+        char buf[4];
+        snprintf(buf, sizeof(buf), "%02X", uid[i]);
+        strncat(out, buf, outSize - strlen(out) - 1);
+        if(i < len-1) strncat(out, ":", outSize - strlen(out) - 1);
+    }
+}
+
+static void computeBandTypeFromUidStr(const char *uidStr, char *out, size_t outSize) {
+    if(!out || outSize == 0) return;
+    String s = String(uidStr);
+    s.toUpperCase();
+    String style = s.endsWith("90") ? "MagicBand+" : (s.endsWith("80") ? "MagicBand 2.0" : "MagicBand 1.0 / Other");
+    strncpy(out, style.c_str(), outSize - 1);
+    out[outSize - 1] = '\0';
+}
+
+// ---------------- Web-controlled scan/register (C-callable for web_portal.cpp) ----------------
+extern "C" void web_arm_scan() {
+    g_webScanArmed = true;
+    g_webScanHasResult = false;
+    g_webScanIsKnown = false;
+    g_webScanKnownIndex = -1;
+    g_webScanUidLen = 0;
+    memset((void*)g_webScanUid, 0, sizeof(g_webScanUid));
+    g_webScanUidStr[0] = '\0';
+    g_webScanTypeStr[0] = '\0';
+    g_webPendingNew = false;
+    memset(&g_webPendingRecord, 0, sizeof(g_webPendingRecord));
+}
+
+extern "C" void web_cancel_scan() {
+    g_webScanArmed = false;
+    g_webPendingNew = false;
+}
+
+extern "C" bool web_has_scan_result() {
+    return g_webScanHasResult;
+}
+
+extern "C" bool web_scan_result_is_known() {
+    return g_webScanIsKnown;
+}
+
+extern "C" int web_scan_known_index() {
+    return g_webScanKnownIndex;
+}
+
+extern "C" void web_scan_uid_string(char *out, size_t outSize) {
+    if(!out || outSize == 0) return;
+    strncpy(out, g_webScanUidStr, outSize - 1);
+    out[outSize - 1] = '\0';
+}
+
+extern "C" void web_scan_type_string(char *out, size_t outSize) {
+    if(!out || outSize == 0) return;
+    strncpy(out, g_webScanTypeStr, outSize - 1);
+    out[outSize - 1] = '\0';
+}
+
+extern "C" bool web_pending_new_band() {
+    return g_webPendingNew;
+}
+
+// If user confirms saving the pending new band, persist it and return the new index; otherwise return -1.
+extern "C" int web_confirm_save_pending_new(bool yes) {
+    if(!g_webPendingNew) {
+        g_webScanArmed = false;
+        return -1;
+    }
+    if(!yes) {
+        g_webPendingNew = false;
+        g_webScanArmed = false;
+        return -1;
+    }
+
+    if(bandCount >= 50) {
+        g_webPendingNew = false;
+        g_webScanArmed = false;
+        return -1;
+    }
+
+    registeredBands[bandCount] = g_webPendingRecord;
+    int newIndex = bandCount;
+    bandCount++;
+
+    prefs.begin("mbands", false);
+    prefs.putInt("count", bandCount);
+    prefs.putBytes(("b" + String(newIndex)).c_str(), &registeredBands[newIndex], sizeof(BandRecord));
+    prefs.end();
+
+    fn_refresh_roller(NULL);
+
+    g_webPendingNew = false;
+    g_webScanArmed = false;
+
+    return newIndex;
+}
+// ---------------------------------------------------------------------------------------------
+
 // Callbacks (C Linkage)
 extern "C" {
     void ui_event_RegisterFromPopup(lv_event_t * e) {
@@ -425,7 +544,9 @@ void setup() {
     // --- START I2C BUSES ---
     Wire.begin(TOUCH_SDA, TOUCH_SCL);
     Wire.setClock(100000);
+    Wire.setTimeOut(20); // ms
     I2C_NFC.begin(NFC_SDA, NFC_SCL, 100000);
+    I2C_NFC.setTimeOut(20);
     if(nfc.begin()) nfc.SAMConfig();
 
     strip.begin(); strip.setBrightness(40); strip.show();
@@ -489,6 +610,15 @@ void loop() {
         if (millis() - la > SPEED_MANUAL) { la = millis(); runWhiteSwirl(SPEED_MANUAL); } 
     }
 
+    // Web-driven scan animation (screen-less register)
+    if (g_webScanArmed && !g_webScanHasResult) {
+        static uint32_t la2 = 0;
+        if (millis() - la2 > SPEED_MANUAL) {
+            la2 = millis();
+            runWhiteSwirl(SPEED_MANUAL);
+        }
+    }
+
     static uint32_t ls = 0;
     if (millis() - ls > 400) {
         ls = millis();
@@ -506,6 +636,52 @@ void loop() {
 
             String style = hexUID.endsWith("90") ? "MagicBand+" : (hexUID.endsWith("80") ? "MagicBand 2.0" : "MagicBand 1.0 / Other");
             Serial.printf("\n--- NFC SCAN: %s ---\nHARDWARE: %s\n", hexUID.c_str(), style.c_str());
+
+            // If the web portal armed a scan, capture the result for the web UI
+            if(g_webScanArmed) {
+                g_webScanUidLen = len;
+                memset((void*)g_webScanUid, 0, sizeof(g_webScanUid));
+                for(uint8_t i=0; i<len && i<sizeof(g_webScanUid); i++) g_webScanUid[i] = uid[i];
+
+                formatUidString(uid, len, g_webScanUidStr, sizeof(g_webScanUidStr));
+                computeBandTypeFromUidStr(g_webScanUidStr, g_webScanTypeStr, sizeof(g_webScanTypeStr));
+
+                int kidx = -1;
+                for (int i = 0; i < bandCount; i++) {
+                    if (memcmp(uid, registeredBands[i].uid, 7) == 0) { kidx = i; break; }
+                }
+
+                g_webScanKnownIndex = kidx;
+                g_webScanIsKnown = (kidx != -1);
+                g_webScanHasResult = true;
+
+                if(!g_webScanIsKnown) {
+                    // Stage a new record (do not commit until user confirms)
+                    memset(&g_webPendingRecord, 0, sizeof(g_webPendingRecord));
+                    memcpy(g_webPendingRecord.uid, uid, 7);
+
+                    // Dynamic name generation: MagicBand N
+                    int nextNum = 1;
+                    bool found;
+                    char candidateName[20];
+                    do {
+                        found = false;
+                        snprintf(candidateName, 20, "MagicBand %d", nextNum);
+                        for (int i = 0; i < bandCount; i++) {
+                            if (strcmp(registeredBands[i].name, candidateName) == 0) { found = true; nextNum++; break; }
+                        }
+                    } while (found);
+
+                    strncpy(g_webPendingRecord.name, candidateName, sizeof(g_webPendingRecord.name) - 1);
+                    g_webPendingRecord.name[sizeof(g_webPendingRecord.name) - 1] = '\0';
+
+                    strncpy(g_webPendingRecord.type, style.c_str(), sizeof(g_webPendingRecord.type) - 1);
+                    g_webPendingRecord.type[sizeof(g_webPendingRecord.type) - 1] = '\0';
+
+                    g_webPendingRecord.color = 0x00FF00;
+                    g_webPendingNew = true;
+                }
+            }
 
             int idx = -1;
             for (int i = 0; i < bandCount; i++) if (memcmp(uid, registeredBands[i].uid, 7) == 0) { idx = i; break; }
