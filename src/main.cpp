@@ -1,8 +1,16 @@
+#ifndef SCREEN_ENABLED
+#define SCREEN_ENABLED 0
+#endif
 #include <Arduino.h>
 #include <Wire.h>
+#if SCREEN_ENABLED
 #include <TFT_eSPI.h>
 #include <lvgl.h>
-#include <ui.h>           
+#include <ui.h>
+#else
+// Forward declare LVGL event type so we can keep stub signatures without pulling LVGL in.
+typedef struct _lv_event_t lv_event_t;
+#endif
 #include <Adafruit_PN532.h>
 #include <Adafruit_NeoPixel.h>
 #include <Preferences.h>
@@ -35,7 +43,9 @@
 #define LCD_RST 14
 
 AsyncWebServer server(80); 
+#if SCREEN_ENABLED
 TFT_eSPI tft = TFT_eSPI(240, 240); 
+#endif
 TwoWire I2C_NFC = TwoWire(1); 
 Adafruit_PN532 nfc(NFC_IRQ, LCD_RST, &I2C_NFC); 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -52,7 +62,11 @@ char ownersList[10][20];
 char locationsList[10][20];
 
 // Make the C-linkage function visible to other files
+#if SCREEN_ENABLED
 extern "C" void fn_refresh_roller(lv_event_t * e);
+#else
+extern "C" void fn_refresh_roller(lv_event_t * e) { (void)e; }
+#endif
 
 // Reload ownersList/locationsList from NVS (safe for missing keys)
 void loadCategoriesFromPrefs() {
@@ -102,11 +116,14 @@ volatile bool g_webPendingNew = false;
 BandRecord g_webPendingRecord;               // staged record (not yet saved)
 // -------------------------------------------------------------------------------
 
+#if SCREEN_ENABLED
 extern "C" {
     extern lv_obj_t * ui_Scanner, * ui_mickeyScanner, * ui_ScanBandPnl3, * ui_BandRoller, * ui_RegisterConfirmPnl, * ui_NewBandConfirm, * ui_StatusLabel, * ui_EditNameLabel, * ui_StandbyScreen, * ui_clock, * ui_Hotspot;
 }
+#endif
 
 void wakeScreen() {
+#if SCREEN_ENABLED
     // 1. Switch screen while the lights are still OFF
     if(lv_scr_act() == ui_StandbyScreen) {
         _ui_screen_change(&ui_Scanner, LV_SCR_LOAD_ANIM_NONE, 0, 0, &ui_Scanner_screen_init);
@@ -118,84 +135,14 @@ void wakeScreen() {
         digitalWrite(TFT_BL, HIGH);
         isScreenOn = true;
     }
-    
+#endif
+
     lastActivityTime = millis();
 }
 
 // Display/Touch Drivers
-void my_disp_flush(lv_disp_drv_t* d, const lv_area_t* a, lv_color_t* c) {
-    uint32_t w=(a->x2-a->x1+1), h=(a->y2-a->y1+1);
-    tft.startWrite(); tft.setAddrWindow(a->x1,a->y1,w,h);
-    tft.pushColors((uint16_t*)&c->full,w*h,true); tft.endWrite();
-    lv_disp_flush_ready(d);
-}
-
-bool get_raw_touch(int16_t &x, int16_t &y) {
-    static uint32_t lastFail = 0;
-    Wire.beginTransmission(0x15); 
-    Wire.write(0x02); // Point to data register
-    
-    // If the device doesn't respond to the register write, abort immediately
-    if(Wire.endTransmission() != 0) {
-        return false; 
-    }
-
-    // Add a tiny delay (10-50 microseconds) to let the controller breathe
-    delayMicroseconds(50); 
-
-    // Attempt the read
-    uint8_t bytesReceived = Wire.requestFrom((uint8_t)0x15, (size_t)6, (bool)true);
-    if (bytesReceived != 6 || Wire.available() != 6) {
-        Wire.flush(); // ESP32-specific
-
-        // If we just failed very recently, don't hammer the bus
-        uint32_t now = millis();
-        if (now - lastFail < 200) return false;
-        lastFail = now;
-
-        // Attempt a quick bus recovery + re-init of the driver
-        pinMode(TOUCH_SCL, OUTPUT);
-        for (int i = 0; i < 9; i++) {
-            digitalWrite(TOUCH_SCL, HIGH);
-            delayMicroseconds(5);
-            digitalWrite(TOUCH_SCL, LOW);
-            delayMicroseconds(5);
-        }
-        pinMode(TOUCH_SCL, INPUT_PULLUP);
-        delayMicroseconds(50);
-
-        Wire.end();
-        Wire.begin(TOUCH_SDA, TOUCH_SCL);
-        return false;
-    }
-    
-    if(bytesReceived == 6 && Wire.available() == 6) {
-        uint8_t p = Wire.read(); 
-        uint8_t xh = Wire.read(); 
-        uint8_t xl = Wire.read(); 
-        uint8_t yh = Wire.read(); 
-        uint8_t yl = Wire.read(); 
-        Wire.read(); // Skip checksum/extra byte
-
-        if(p > 0 && p < 5) { 
-            x = ((xh & 0x0F) << 8) | xl; 
-            y = ((yh & 0x0F) << 8) | yl; 
-            return true; 
-        }
-    }
-    return false;
-}
-
-
-
-void my_touchpad_read(lv_indev_drv_t* d, lv_indev_data_t* data) {
-    int16_t tx, ty;
-    if(get_raw_touch(tx, ty)){ 
-        data->state=LV_INDEV_STATE_PR; data->point.x=tx; data->point.y=ty; 
-        wakeScreen(); // ADD THIS LINE
-    }
-    else data->state=LV_INDEV_STATE_REL;
-}
+#if SCREEN_ENABLED
+#endif
 
 
 
@@ -214,10 +161,12 @@ void runWhiteSwirl(int speed) {
 void handleSuccess(uint32_t color) {
     if(isSuccessActive) return;
     isSuccessActive = true;
+#if SCREEN_ENABLED
     if(ui_mickeyScanner){
         lv_obj_set_style_img_recolor(ui_mickeyScanner, lv_color_hex(color), 0);
         lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 255, 0);
     }
+#endif
     // STAGE 1: White Comet Swirl (1 rotation)
     for(int f=0; f < LED_COUNT; f++){
         strip.clear();
@@ -226,29 +175,49 @@ void handleSuccess(uint32_t color) {
             int b=255-(i*50); if(b<0) b=0;
             strip.setPixelColor(p, strip.Color(b, b, b)); 
         }
-        strip.show(); delay(SPEED_COMET); lv_timer_handler(); delay(1);   
+        strip.show(); delay(SPEED_COMET);
+#if SCREEN_ENABLED
+        lv_timer_handler(); delay(1);
+#endif
     }
     // STAGE 2: Progressive Fill (White, 1 to 12)
     strip.clear();
     for(int i=0; i < LED_COUNT; i++) {
         strip.setPixelColor(i, strip.Color(255, 255, 255));
-        strip.show(); delay(SPEED_FILL); lv_timer_handler(); delay(1);
+        strip.show(); delay(SPEED_FILL);
+#if SCREEN_ENABLED
+        lv_timer_handler(); delay(1);
+#endif
     }
     // STAGE 3: Pulse Breathing Fade (Band Color)
     for(int pulse = 0; pulse < 2; pulse++){
-        for(int b = 30; b <= 255; b += 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); delay(1);}
-        for(int b = 255; b >= 30; b -= 10){ strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE); lv_timer_handler(); delay(1);}
+        for(int b = 30; b <= 255; b += 10){
+            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE);
+#if SCREEN_ENABLED
+            lv_timer_handler(); delay(1);
+#endif
+        }
+        for(int b = 255; b >= 30; b -= 10){
+            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE);
+#if SCREEN_ENABLED
+            lv_timer_handler(); delay(1);
+#endif
+        }
     }
+#if SCREEN_ENABLED
     if(ui_mickeyScanner) lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 0, 0);
+#endif
     strip.clear(); strip.setBrightness(40); strip.show();
     isSuccessActive = false;
 }
 
 void reset_record_panels() {
-
+#if SCREEN_ENABLED
     if(ui_ScanBandPnl3) lv_obj_add_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
+#endif
 }
 
+#if SCREEN_ENABLED
 void updateClock() {
     if (lv_scr_act() != ui_StandbyScreen || ui_clock == NULL) return;
 
@@ -267,6 +236,7 @@ void updateClock() {
     strftime(timeBuf, sizeof(timeBuf), "%H:%M", &timeinfo);
     lv_label_set_text(ui_clock, timeBuf);
 }
+#endif
 
 
 void autoSetTimezone() {
@@ -402,6 +372,7 @@ extern "C" int web_confirm_save_pending_new(bool yes) {
 }
 // ---------------------------------------------------------------------------------------------
 
+#if SCREEN_ENABLED
 // Callbacks (C Linkage)
 extern "C" {
     void ui_event_RegisterFromPopup(lv_event_t * e) {
@@ -499,7 +470,7 @@ extern "C" {
             isScreenOn = false;
         } 
     }
-}
+#endif
 
 
 
@@ -514,6 +485,7 @@ void setup() {
     // Load category lists
     loadCategoriesFromPrefs();
     
+    #if SCREEN_ENABLED
     // --- I2C BUS RECOVERY (prevents SDA lockups) ---
     pinMode(TOUCH_SDA, INPUT_PULLUP);
     pinMode(TOUCH_SCL, OUTPUT);
@@ -545,11 +517,17 @@ void setup() {
     Wire.begin(TOUCH_SDA, TOUCH_SCL);
     Wire.setClock(100000);
     Wire.setTimeOut(20); // ms
+    #endif
+
+    // --- START NFC I2C (always-on, screenless friendly) ---
     I2C_NFC.begin(NFC_SDA, NFC_SCL, 100000);
     I2C_NFC.setTimeOut(20);
     if(nfc.begin()) nfc.SAMConfig();
 
+    // LEDs always-on
     strip.begin(); strip.setBrightness(40); strip.show();
+
+#if SCREEN_ENABLED
     lv_init(); tft.begin(); tft.setRotation(0);
     pinMode(TFT_BL, OUTPUT); digitalWrite(TFT_BL, HIGH); 
     
@@ -570,27 +548,35 @@ void setup() {
     ui_init(); 
     if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Tap below to set up WiFi");
     if(ui_NewBandConfirm) lv_obj_add_event_cb(ui_NewBandConfirm, ui_event_RegisterFromPopup, LV_EVENT_CLICKED, NULL);
+#endif
 
     initWebServer(); 
     if (tryConnectSavedWiFi()) { 
         isWiFiActive = true; 
         WiFi.setSleep(false);
         startWebServer(); 
+#if SCREEN_ENABLED
         if(ui_StatusLabel) {
             String msg = "Connected to: " + WiFi.SSID();
             lv_label_set_text(ui_StatusLabel, msg.c_str());
         }
+#endif
         autoSetTimezone(); 
     } else {
+#if SCREEN_ENABLED
         if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Tap Bellow to Set Up Wifi");
+#endif
     }
 }
 
 void loop() {
+#if SCREEN_ENABLED
     lv_timer_handler(); 
     handleStandby();
     updateClock();
+#endif
 
+#if SCREEN_ENABLED
     static lv_obj_t * last_scr = NULL;
     if(lv_scr_act() != last_scr) {
         last_scr = lv_scr_act();
@@ -603,6 +589,7 @@ void loop() {
             }
         }
     }
+#endif
     
     static int lc = 0; if (bandCount != lc) { fn_refresh_roller(NULL); lc = bandCount; }
     if (isWaitingForUID) { 
@@ -625,11 +612,13 @@ void loop() {
         uint8_t uid[7], len;
         if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &len, 50)) {
             wakeScreen();
+#if SCREEN_ENABLED
             lastActivityTime = millis(); // Reset timer on every scan
             if(!isScreenOn) {
                 digitalWrite(TFT_BL, HIGH);
                 isScreenOn = true;
             }
+#endif
             String hexUID = "";
             for (uint8_t i = 0; i < len; i++) { if (uid[i] < 0x10) hexUID += "0"; hexUID += String(uid[i], HEX); if (i < len - 1) hexUID += ":"; }
             hexUID.toUpperCase();
@@ -723,13 +712,17 @@ void loop() {
                 isWaitingForUID = false;
                 
                 // Show Success Panel child of Scanner screen
+#if SCREEN_ENABLED
                 if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
+#endif
                 handleSuccess(0x00FF00); 
             }
             else {
-                handleSuccess(0x00FF00); 
+                handleSuccess(0x00FF00);
+#if SCREEN_ENABLED
                 memcpy(tempRecord.uid, uid, 7); 
                 if(ui_RegisterConfirmPnl) lv_obj_clear_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN);
+#endif
             }
         }
     }
