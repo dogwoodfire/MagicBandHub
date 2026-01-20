@@ -19,9 +19,6 @@ typedef struct _lv_event_t lv_event_t;
 #include <LittleFS.h>
 #include <ESPmDNS.h>
 #include "web_portal.h"
-#include <time.h>
-#include "esp_sntp.h"
-#include <HTTPClient.h>
 
 // --- Animation Speed Variables (Increase to SLOW DOWN) ---
 #define SPEED_COMET 30       
@@ -140,12 +137,6 @@ void wakeScreen() {
     lastActivityTime = millis();
 }
 
-// Display/Touch Drivers
-#if SCREEN_ENABLED
-#endif
-
-
-
 void runWhiteSwirl(int speed) {
     static uint8_t swirlPos = 0;
     strip.clear();
@@ -239,35 +230,6 @@ void updateClock() {
 #endif
 
 
-void autoSetTimezone() {
-    if (WiFi.status() != WL_CONNECTED) return;
-
-    HTTPClient http;
-    // Query timezone info based on public IP
-    http.begin("http://worldtimeapi.org/api/ip");
-    int httpCode = http.GET();
-
-    if (httpCode == 200) {
-        String payload = http.getString();
-        // Extract the offset (e.g., "+01:00" or "-05:00")
-        int offsetIdx = payload.indexOf("\"utc_offset\":\"") + 14;
-        String offsetStr = payload.substring(offsetIdx, offsetIdx + 6);
-        
-        // Convert "+HH:MM" to total seconds
-        int hours = offsetStr.substring(1, 3).toInt();
-        int mins = offsetStr.substring(4, 6).toInt();
-        long totalOffset = (hours * 3600) + (mins * 60);
-        if (offsetStr.startsWith("-")) totalOffset = -totalOffset;
-
-        // Apply the detected offset (NTP sync)
-        configTime(totalOffset, 0, "pool.ntp.org", "time.nist.gov");
-        Serial.printf("Timezone Auto-Set: %s (Offset: %ld sec)\n", offsetStr.c_str(), totalOffset);
-    } else {
-        Serial.println("Timezone API failed, using default UTC.");
-        configTime(0, 0, "pool.ntp.org");
-    }
-    http.end();
-}
 
 static void formatUidString(const uint8_t *uid, uint8_t len, char *out, size_t outSize) {
     if(!out || outSize < 4) return;
@@ -477,11 +439,67 @@ extern "C" {
 void setup() {
     setCpuFrequencyMhz(240);
     Serial.begin(115200);
+    // ----- Load bands from NVS (robust: tolerate missing keys / holes) -----
     prefs.begin("mbands", true);
-    int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 50) ? 0 : rc;
-    for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
-    
+
+    int storedCount = prefs.getInt("count", 0);
+    if (storedCount < 0 || storedCount > 50) storedCount = 0;
+
+    int loaded = 0;
+    for (int i = 0; i < 50; i++) {
+        String key = "b" + String(i);
+
+        // Skip missing keys (prevents NOT_FOUND spam)
+        if (!prefs.isKey(key.c_str())) continue;
+
+        BandRecord tmp;
+        memset(&tmp, 0, sizeof(BandRecord));
+
+        size_t got = prefs.getBytes(key.c_str(), &tmp, sizeof(BandRecord));
+        if (got != sizeof(BandRecord)) continue;
+
+        // Basic validity check: must have a non-zero UID
+        bool uidNonZero = false;
+        for (int u = 0; u < 7; u++) {
+            if (tmp.uid[u] != 0) { uidNonZero = true; break; }
+        }
+        if (!uidNonZero) continue;
+
+        // Accept record and compact into the front of the array
+        registeredBands[loaded] = tmp;
+        loaded++;
+        if (loaded >= 50) break;
+    }
+
+    bandCount = loaded;
+
+    // If NVS count/keys are inconsistent, rewrite a compacted set to avoid future holes.
+    if (bandCount != storedCount) {
+        prefs.end();
+        prefs.begin("mbands", false);
+        prefs.clear();
+        prefs.putInt("count", bandCount);
+        for (int i = 0; i < bandCount; i++) {
+            prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
+        }
+        prefs.end();
+        prefs.begin("mbands", true);
+    }
+
+    // Boot diagnostics: prove what's loaded at boot
+    Serial.printf("[BOOT] bandCount=%d\n", bandCount);
+    for (int i = 0; i < bandCount; i++) {
+        char uidStr[32] = {0};
+        formatUidString(registeredBands[i].uid, 7, uidStr, sizeof(uidStr));
+        Serial.printf("[BOOT] b%d uid=%s name='%s' owner='%s' loc='%s'\n",
+                    i, uidStr,
+                    registeredBands[i].name,
+                    registeredBands[i].owner,
+                    registeredBands[i].location);
+    }
+
     prefs.end();
+    // ----- End load -----
     // Load category lists
     loadCategoriesFromPrefs();
     
@@ -551,17 +569,16 @@ void setup() {
 #endif
 
     initWebServer(); 
-    if (tryConnectSavedWiFi()) { 
-        isWiFiActive = true; 
-        WiFi.setSleep(false);
-        startWebServer(); 
 #if SCREEN_ENABLED
         if(ui_StatusLabel) {
             String msg = "Connected to: " + WiFi.SSID();
             lv_label_set_text(ui_StatusLabel, msg.c_str());
         }
 #endif
-        autoSetTimezone(); 
+    if (tryConnectSavedWiFi()) { 
+        isWiFiActive = true; 
+        WiFi.setSleep(false);
+        startWebServer(); 
     } else {
 #if SCREEN_ENABLED
         if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Tap Bellow to Set Up Wifi");

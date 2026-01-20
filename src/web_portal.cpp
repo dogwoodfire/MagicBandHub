@@ -418,17 +418,18 @@ void initWebServer() {
         String html = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
         html += "<style>body{font-family:sans-serif; text-align:center; background:#3677A3; padding:20px;} ";
         html += "h1{color:#fff; font-weight:800; margin:10px 0 18px 0;} ";
-        html += ".card{background:white; border-radius:15px; padding:15px; margin:10px auto; max-width:350px; box-shadow: 2px 2px 10px #ccc;} ";
+        html += ".card{background:white; border-radius:15px; padding:15px; margin:10px auto; max-width:350px; box-shadow: 2px 2px 10px rgba(11, 18, 108, 0.6);} ";
         html += ".summary{display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;} ";
         html += ".summary-left{display:flex; align-items:center; gap:10px; text-align:left;} ";
         html += ".thumb{width:110px; height:180px; object-fit:contain; object-position:top center; border-radius:10px; background:#fff; box-sizing:border-box; padding:10px; display:block;} ";
         html += ".thumb{border:1px solid #e6e6e6;} ";
         html += ".settings-header{cursor:pointer; font-weight:bold; padding:10px;} .settings-body{display:none; text-align:left;} ";
         html += ".meta{color:#666; font-size:0.8em;} ";
+        html += ".status{margin-top:10px; padding:10px 12px; border-radius:10px; font-weight:800; background:#fff3cd; color:#856404; border:1px solid #ffeeba;} ";
         html += ".details{margin-top:12px; text-align:left;} ";
-        html += "input, select{margin:0; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box; max-width:100%;} ";
+        html += "input, select{margin:0; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box; max-width:100%; font-size:16px;} ";
         html += ".btn-search{background:#5765f2; color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; width:80%; margin-bottom:10px;} ";
-        html += ".btn-save{background:#2ed573; color:white; border:none; padding:12px; width:80%; border-radius:8px; cursor:pointer;} ";
+        html += ".btn-save{background:#2ed573; color:white; border:none; padding:12px; width:80%; border-radius:8px; cursor:pointer; font-size:16px;} ";
         html += ".btn-del{background:#ff4757; color:white; border:none; padding:5px 10px; border-radius:5px; font-size:0.8em; display:inline-block; text-decoration:none;} ";
         html += ".btn-del:active{opacity:0.9;} ";
         html += ".details{margin-top:12px; text-align:left;} ";
@@ -437,7 +438,10 @@ void initWebServer() {
         html += ".field{margin-bottom:12px;} ";
         html += ".field label{display:block; font-size:0.8em; color:#555; margin-bottom:4px;} ";
         html += ".field input, .field select{width:100%; max-width:100%; display:block;} ";
-        html += ".btn-secondary{background:#eef1ff; color:#3b4ce2; border:none; padding:10px; width:100%; border-radius:8px; cursor:pointer; margin-top:6px;} ";
+        html += "input[type=date]{width:170px;} ";
+        html += ".btn-secondary{background:#eef1ff; color:#3b4ce2; border:none; padding:10px; width:100%; border-radius:8px; cursor:pointer; margin-top:6px; font-size:16px;} ";
+        html += ".scan-btn{width:auto; padding:10px 14px; margin:0; font-size:16px;} ";
+        html += ".scan-cancel{background:#ff4757; color:#fff; border:none; border-radius:8px; cursor:pointer;} ";
         html += "</style>";
         
         // SEARCH FILTER SCRIPT
@@ -451,13 +455,16 @@ void initWebServer() {
         html += "function toggleSettings(){ var el=document.getElementById('settings'); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
                 // Screen-less scan/register helpers
         html += "let __scanPoll=null;";
-        html += "function armScan(){ fetch('/scan_arm?ajax=1').then(()=>{ showScanArmed(); startScanPoll(); }).catch(()=>{}); }";
+        html += "function lookupMbc(id){ try{ var inp=document.getElementById('mbc'+id); var st=document.getElementById('mbcStatus'+id); if(!inp) return; var mbc=encodeURIComponent(inp.value||''); if(st){ st.style.display='block'; st.innerText='Fetching listing details...'; } fetch('/lookup?ajax=1&id='+id+'&mbc='+mbc).then(r=>r.json()).then(d=>{ if(!d||!d.status){ if(st) st.innerText='Fetch failed.'; return; } if(d.status==='busy'){ if(st) st.innerText='Another fetch is already running. Please wait.'; return; } if(d.status==='fail'){ if(st) st.innerText='Fetch failed. Check Wi-Fi and the listing.'; return; } if(st) st.innerText='Fetching from MagicBandCollectors.com...'; setTimeout(function(){ window.location='/?open='+id; }, 5000); }).catch(()=>{ if(st) st.innerText='Fetch failed.'; }); }catch(e){} }";
+        html += "function armScan(){ fetch('/scan_arm?ajax=1').then(()=>{ var c=document.getElementById('btnScanCancel'); if(c) c.style.display='inline-block'; showScanFetching(); startScanPoll(); }).catch(()=>{}); }";
+        html += "function cancelScan(){ fetch('/scan_cancel?ajax=1').then(()=>{ stopScanPoll(); var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(body) body.style.display='none'; if(hint) hint.innerText='Scan cancelled.'; }).catch(()=>{}); }";
+        html += "function showScanFetching(){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Tap a band to the reader...'; body.innerHTML='<div style=\"padding:10px;border:1px dashed #ccc;border-radius:10px;\">Waiting for a band... <div style=\"margin-top:8px;font-weight:700;\">(Scanning active)</div></div>'; }";
         html += "function startScanPoll(){ if(__scanPoll) return; __scanPoll=setInterval(pollScan, 700); pollScan(); }";
         html += "function stopScanPoll(){ if(__scanPoll){ clearInterval(__scanPoll); __scanPoll=null; } }";
         html += "function showScanArmed(){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Tap a band to the reader...'; body.innerHTML='<div style=\"padding:10px;border:1px dashed #ccc;border-radius:10px;\">Waiting for a band...</div>'; }";
         html += "function showScanKnown(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Known band detected'; var img=''; if(d.img){ img='<img src=\"'+d.img+'\" style=\"width:160px;border-radius:10px;display:block;margin:10px auto;background:#fff;padding:10px;box-sizing:border-box;border:1px solid #e6e6e6;\">'; } body.innerHTML= img + '<div style=\"font-weight:800;\">'+(d.name||'Known band')+'</div><div class=\"meta\">'+(d.type||'')+'</div><button class=\"btn-secondary\" style=\"margin-top:10px;\" onclick=\"openBand('+d.knownIndex+');return false;\">Open / Edit</button>'; stopScanPoll(); }";
-        html += "function showScanNew(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='New band detected'; body.innerHTML='<div style=\"font-weight:800;\">New band</div><div class=\"meta\">'+(d.uid||'')+' &nbsp;'+(d.type||'')+'</div><div style=\"display:flex;gap:10px;margin-top:10px;\"><button class=\"btn-save\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(1);return false;\">Yes, save</button><button class=\"btn-del\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(0);return false;\">No</button></div>'; }";
-        html += "function confirmSave(yes){ fetch('/scan_confirm?yes='+yes+'&ajax=1').then(r=>r.json()).then(d=>{ if(d && d.saved && d.openId>=0){ window.location='/?msg=scan_saved&open='+d.openId; } else { window.location='/?msg=scan_cancel'; } }).catch(()=>{ window.location='/?msg=scan_cancel'; }); }";
+        html += "function showScanNew(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; body.style.display='block'; hint.innerText='New band detected'; body.innerHTML='<div style=\"font-weight:800;\">New band</div><div class=\"meta\">'+(d.uid||'')+' &nbsp;'+(d.type||'')+'</div><div style=\"display:flex;gap:10px;margin-top:10px;\"><button class=\"btn-save\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(1);return false;\">Yes, save</button><button class=\"btn-del\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(0);return false;\">No</button></div>'; }";
+        html += "function confirmSave(yes){ fetch('/scan_confirm?yes='+yes+'&ajax=1').then(r=>r.json()).then(d=>{ var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; if(d && d.saved && d.openId>=0){ window.location='/?msg=scan_saved&open='+d.openId; } else { window.location='/?msg=scan_cancel'; } }).catch(()=>{ window.location='/?msg=scan_cancel'; }); }";
         html += "function openBand(id){ window.location='/?open='+id; }";
         html += "function pollScan(){ fetch('/scan_status').then(r=>r.json()).then(d=>{ if(!d||!d.state) return; if(d.state==='known'){ showScanKnown(d); } else if(d.state==='new'){ showScanNew(d); } else if(d.state==='armed'){ showScanArmed(); } }).catch(()=>{}); }";
         html += "</script></head><body>";
@@ -470,7 +477,7 @@ void initWebServer() {
                 html += "<div class='card' style='background:#d4edda;color:#155724;'>Fetching listing details... refreshing shortly.</div>";
                 // one-time refresh back to the open card (no msg param)
                 String openId = request->hasParam("open") ? request->getParam("open")->value() : "0";
-                html += "<meta http-equiv='refresh' content='2;url=/?open=" + openId + "'>";
+                html += "<meta http-equiv='refresh' content='5;url=/?open=" + openId + "'>";
             } else if(msg == "saved") {
                 html += "<div class='card' style='background:#d4edda;color:#155724;'>Saved &#10003;</div>";
             } else if(msg == "lookup_busy") {
@@ -510,7 +517,10 @@ void initWebServer() {
             html += "<div class='card' id='scanCard' style='text-align:left;'>";
             html += "<div style='display:flex; align-items:center; justify-content:space-between; gap:10px;'>";
             html += "<div style='font-weight:800; color:#1f2d3d;'>Register Band</div>";
-            html += "<button class='btn-secondary' style='width:auto; padding:10px 14px;' onclick='armScan(); return false;'>Start</button>";
+            html += "<div style='display:flex; gap:8px;'>";
+            html += "<button id='btnScanStart' class='btn-secondary scan-btn' onclick='armScan(); return false;'>Start</button>";
+            html += "<button id='btnScanCancel' class='scan-btn scan-cancel' style='display:none;' onclick='cancelScan(); return false;'>Cancel</button>";
+            html += "</div>";
             html += "</div>";
             html += "<div class='meta' id='scanHint' style='margin-top:6px;'>Start a scan from the browser (screen-less mode). LEDs will swirl until a band is detected.</div>";
             html += "<div id='scanBody' style='margin-top:10px; display:none;'></div>";
@@ -597,8 +607,9 @@ void initWebServer() {
                 // MagicBandCollectors Section
                 html += "<div class='section'>";
                 html += "<div class='section-title'>MagicBandCollectors</div>";
-                html += "<div class='field'><label>MagicBandCollectors.com Listing</label><input type='text' name='mbc' value='" + escMbc + "' placeholder='2535 or full URL'></div>";
-                html += "<button type='submit' formaction='/lookup' formmethod='GET' class='btn-secondary'>Fetch from MagicBandCollectors</button>";
+                html += "<div class='field'><label>MagicBandCollectors.com Listing</label><input id='mbc" + String(i) + "' type='text' name='mbc' value='" + escMbc + "' placeholder='2535 or full URL'></div>";
+                html += "<button type='button' class='btn-secondary' onclick='lookupMbc(" + String(i) + "); return false;'>Fetch from MagicBandCollectors</button>";
+                html += "<div id='mbcStatus" + String(i) + "' class='status' style='display:none;'></div>";
                 html += "</div>";
                 // Imported Metadata Section
                 html += "<div class='section'>";
@@ -714,6 +725,16 @@ void initWebServer() {
         }
     });
 
+    // ROUTE: Cancel a web-driven scan (screen-less register)
+    server.on("/scan_cancel", HTTP_GET, [](AsyncWebServerRequest *request){
+        web_cancel_scan();
+        if(request->hasParam("ajax")) {
+            request->send(200, "text/plain", "OK");
+        } else {
+            request->redirect("/?msg=scan_cancel");
+        }
+    });
+
     // ROUTE: Poll scan status (JSON)
     server.on("/scan_status", HTTP_GET, [](AsyncWebServerRequest *request){
         char uidBuf[32]; uidBuf[0] = '\0';
@@ -785,58 +806,51 @@ void initWebServer() {
         if(request->hasParam("id")){
             int id = request->getParam("id")->value().toInt();
             if(id < bandCount) {
-                if(request->hasParam("name")) {
-                    strncpy(registeredBands[id].name, request->getParam("name")->value().c_str(), sizeof(registeredBands[id].name) - 1);
-                    registeredBands[id].name[sizeof(registeredBands[id].name) - 1] = '\0';
+                auto getParamTrimmed = [&](const char* name) -> String {
+                    if(!request->hasParam(name)) return "";
+                    String v = request->getParam(name)->value();
+                    v.trim();
+                    return v;
+                };
+
+                auto copyIfNonEmpty = [&](const char* name, char* dst, size_t dstSize) {
+                    String v = getParamTrimmed(name);
+                    if(v.length() == 0) return; // non-destructive
+                    strncpy(dst, v.c_str(), dstSize - 1);
+                    dst[dstSize - 1] = '\0';
+                };
+
+                // Non-destructive field updates: only overwrite when value is non-empty
+                copyIfNonEmpty("name",  registeredBands[id].name, sizeof(registeredBands[id].name));
+                copyIfNonEmpty("owner", registeredBands[id].owner, sizeof(registeredBands[id].owner));
+                copyIfNonEmpty("loc",   registeredBands[id].location, sizeof(registeredBands[id].location));
+                copyIfNonEmpty("img",   registeredBands[id].imageUrl, sizeof(registeredBands[id].imageUrl));
+                copyIfNonEmpty("rtype", registeredBands[id].releaseType, sizeof(registeredBands[id].releaseType));
+                copyIfNonEmpty("rdate", registeredBands[id].releaseDate, sizeof(registeredBands[id].releaseDate));
+                copyIfNonEmpty("rat",   registeredBands[id].releasedAt, sizeof(registeredBands[id].releasedAt));
+                copyIfNonEmpty("bcol",  registeredBands[id].bandColorName, sizeof(registeredBands[id].bandColorName));
+                copyIfNonEmpty("icol",  registeredBands[id].iconColorName, sizeof(registeredBands[id].iconColorName));
+                copyIfNonEmpty("op",    registeredBands[id].originalPrice, sizeof(registeredBands[id].originalPrice));
+                copyIfNonEmpty("sku",   registeredBands[id].sku, sizeof(registeredBands[id].sku));
+                copyIfNonEmpty("mbc",   registeredBands[id].mbcListing, sizeof(registeredBands[id].mbcListing));
+
+                // Bought date: apply only if it looks like YYYY-MM-DD (10 chars). Otherwise keep existing.
+                {
+                    String d = getParamTrimmed("date");
+                    if (d.length() == 10) {
+                        strncpy(registeredBands[id].dateBought, d.c_str(), 11);
+                        registeredBands[id].dateBought[10] = '\0';
+                    }
                 }
-                if(request->hasParam("date")) strncpy(registeredBands[id].dateBought, request->getParam("date")->value().c_str(), 11);
-                if(request->hasParam("owner")) {
-                    strncpy(registeredBands[id].owner, request->getParam("owner")->value().c_str(), sizeof(registeredBands[id].owner) - 1);
-                    registeredBands[id].owner[sizeof(registeredBands[id].owner) - 1] = '\0';
+
+                // Color: apply only if present and non-empty
+                {
+                    String c = getParamTrimmed("color");
+                    if (c.length() > 0) {
+                        registeredBands[id].color = hexToUint(c);
+                    }
                 }
-                if(request->hasParam("loc")) {
-                    strncpy(registeredBands[id].location, request->getParam("loc")->value().c_str(), sizeof(registeredBands[id].location) - 1);
-                    registeredBands[id].location[sizeof(registeredBands[id].location) - 1] = '\0';
-                }
-                if(request->hasParam("color")) registeredBands[id].color = hexToUint(request->getParam("color")->value());
-                if(request->hasParam("img")) {
-                    strncpy(registeredBands[id].imageUrl, request->getParam("img")->value().c_str(), sizeof(registeredBands[id].imageUrl) - 1);
-                    registeredBands[id].imageUrl[sizeof(registeredBands[id].imageUrl) - 1] = '\0';
-                }
-                if(request->hasParam("rtype")) {
-                    strncpy(registeredBands[id].releaseType, request->getParam("rtype")->value().c_str(), sizeof(registeredBands[id].releaseType) - 1);
-                    registeredBands[id].releaseType[sizeof(registeredBands[id].releaseType) - 1] = '\0';
-                }
-                if(request->hasParam("rdate")) {
-                    strncpy(registeredBands[id].releaseDate, request->getParam("rdate")->value().c_str(), sizeof(registeredBands[id].releaseDate) - 1);
-                    registeredBands[id].releaseDate[sizeof(registeredBands[id].releaseDate) - 1] = '\0';
-                }
-                if(request->hasParam("rat")) {
-                    strncpy(registeredBands[id].releasedAt, request->getParam("rat")->value().c_str(), sizeof(registeredBands[id].releasedAt) - 1);
-                    registeredBands[id].releasedAt[sizeof(registeredBands[id].releasedAt) - 1] = '\0';
-                }
-                if(request->hasParam("bcol")) {
-                    strncpy(registeredBands[id].bandColorName, request->getParam("bcol")->value().c_str(), sizeof(registeredBands[id].bandColorName) - 1);
-                    registeredBands[id].bandColorName[sizeof(registeredBands[id].bandColorName) - 1] = '\0';
-                }
-                if(request->hasParam("icol")) {
-                    strncpy(registeredBands[id].iconColorName, request->getParam("icol")->value().c_str(), sizeof(registeredBands[id].iconColorName) - 1);
-                    registeredBands[id].iconColorName[sizeof(registeredBands[id].iconColorName) - 1] = '\0';
-                }
-                if(request->hasParam("op")) {
-                    strncpy(registeredBands[id].originalPrice, request->getParam("op")->value().c_str(), sizeof(registeredBands[id].originalPrice) - 1);
-                    registeredBands[id].originalPrice[sizeof(registeredBands[id].originalPrice) - 1] = '\0';
-                }
-                if(request->hasParam("sku")) {
-                    strncpy(registeredBands[id].sku, request->getParam("sku")->value().c_str(), sizeof(registeredBands[id].sku) - 1);
-                    registeredBands[id].sku[sizeof(registeredBands[id].sku) - 1] = '\0';
-                }
-                if(request->hasParam("mbc")) {
-                    strncpy(registeredBands[id].mbcListing,
-                            request->getParam("mbc")->value().c_str(),
-                            sizeof(registeredBands[id].mbcListing) - 1);
-                    registeredBands[id].mbcListing[sizeof(registeredBands[id].mbcListing) - 1] = '\0';
-                }
+
                 prefs.begin("mbands", false);
                 prefs.putBytes(("b" + String(id)).c_str(), &registeredBands[id], sizeof(BandRecord));
                 prefs.end();
@@ -850,7 +864,11 @@ void initWebServer() {
     // ROUTE: Lookup MagicBandCollectors listing and apply to a band (runs in background task)
     server.on("/lookup", HTTP_GET, [](AsyncWebServerRequest *request){
         if(!request->hasParam("id") || !request->hasParam("mbc")) {
-            request->redirect("/?msg=lookup_fail");
+            if(request->hasParam("ajax")) {
+                request->send(200, "application/json", "{\"status\":\"fail\"}");
+            } else {
+                request->redirect("/?msg=lookup_fail");
+            }
             return;
         }
 
@@ -869,7 +887,11 @@ void initWebServer() {
         }
 
         if(id < 0 || id >= bandCount || mbc <= 0) {
-            request->redirect("/?msg=lookup_fail");
+            if(request->hasParam("ajax")) {
+                request->send(200, "application/json", "{\"status\":\"fail\"}");
+            } else {
+                request->redirect("/?msg=lookup_fail");
+            }
             return;
         }
 
@@ -884,7 +906,11 @@ void initWebServer() {
 
         if(g_lookupInProgress) {
             g_lookupResult = 3; // busy
-            request->redirect("/?msg=lookup_busy&open=" + String(id));
+            if(request->hasParam("ajax")) {
+                request->send(200, "application/json", "{\"status\":\"busy\"}");
+            } else {
+                request->redirect("/?msg=lookup_busy&open=" + String(id));
+            }
             return;
         }
 
@@ -899,7 +925,11 @@ void initWebServer() {
         // Run on core 1 so async_tcp (often core 0) stays responsive
         xTaskCreatePinnedToCore(mbcLookupTask, "mbcLookupTask", 8192, job, 1, NULL, 1);
 
-        request->redirect("/?msg=lookup_ok&open=" + String(id));
+        if(request->hasParam("ajax")) {
+            request->send(200, "application/json", "{\"status\":\"started\"}");
+        } else {
+            request->redirect("/?msg=lookup_ok&open=" + String(id));
+        }
     });
 
     server.on("/delete", HTTP_GET, [](AsyncWebServerRequest *request){
