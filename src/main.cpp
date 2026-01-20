@@ -231,14 +231,14 @@ void updateClock() {
 
 
 
-static void formatUidString(const uint8_t *uid, uint8_t len, char *out, size_t outSize) {
+extern "C" void formatUidString(const uint8_t *uid, size_t len, char *out, size_t outSize) {
     if(!out || outSize < 4) return;
     out[0] = '\0';
-    for(uint8_t i=0; i<len && (i*3+2) < outSize; i++) {
+    for(size_t i = 0; i < len && (i * 3 + 2) < outSize; i++) {
         char buf[4];
         snprintf(buf, sizeof(buf), "%02X", uid[i]);
         strncat(out, buf, outSize - strlen(out) - 1);
-        if(i < len-1) strncat(out, ":", outSize - strlen(out) - 1);
+        if(i < len - 1) strncat(out, ":", outSize - strlen(out) - 1);
     }
 }
 

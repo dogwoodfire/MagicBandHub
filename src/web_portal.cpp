@@ -20,6 +20,7 @@ extern uint32_t idleTimeout;
 extern uint32_t sleepTimeout;
 
 extern "C" void fn_refresh_roller(lv_event_t * e);
+extern "C" void formatUidString(const uint8_t* uid, size_t len, char* out, size_t outSize);
 
 // Screen-less web-driven scan/register (implemented in main.cpp)
 extern "C" void web_arm_scan();
@@ -56,6 +57,159 @@ static String jsonEscape(const String &in) {
     s.replace("\n", " ");
     s.replace("\r", " ");
     return s;
+}
+
+// --- Minimal JSON helpers (sufficient for importing OUR exported backup) ---
+static String jsonUnescape(String s) {
+    s.replace("\\\"", "\"");
+    s.replace("\\\\", "\\");
+    s.replace("\\n", " ");
+    s.replace("\\r", " ");
+    return s;
+}
+
+static bool jsonFindValueString(const String &obj, const String &key, String &out) {
+    // Looks for "key":"value"
+    String needle = "\"" + key + "\":";
+    int p = obj.indexOf(needle);
+    if (p < 0) return false;
+    p += needle.length();
+
+    // Skip whitespace
+    while (p < (int)obj.length() && (obj[p] == ' ' || obj[p] == '\t' || obj[p] == '\n' || obj[p] == '\r')) p++;
+
+    if (p >= (int)obj.length() || obj[p] != '\"') return false;
+    p++;
+
+    String val = "";
+    bool esc = false;
+    for (; p < (int)obj.length(); p++) {
+        char ch = obj[p];
+        if (esc) { val += ch; esc = false; continue; }
+        if (ch == '\\') { val += ch; esc = true; continue; }
+        if (ch == '\"') break;
+        val += ch;
+    }
+    out = jsonUnescape(val);
+    out.trim();
+    return true;
+}
+
+static bool jsonFindValueInt(const String &obj, const String &key, int &out) {
+    String needle = "\"" + key + "\":";
+    int p = obj.indexOf(needle);
+    if (p < 0) return false;
+    p += needle.length();
+    while (p < (int)obj.length() && (obj[p] == ' ' || obj[p] == '\t' || obj[p] == '\n' || obj[p] == '\r')) p++;
+
+    int sign = 1;
+    if (p < (int)obj.length() && obj[p] == '-') { sign = -1; p++; }
+
+    long v = 0;
+    bool any = false;
+    while (p < (int)obj.length()) {
+        char ch = obj[p];
+        if (ch < '0' || ch > '9') break;
+        v = v * 10 + (ch - '0');
+        any = true;
+        p++;
+    }
+    if (!any) return false;
+    out = (int)(v * sign);
+    return true;
+}
+
+static bool jsonFindValueUInt32(const String &obj, const String &key, uint32_t &out) {
+    String needle = "\"" + key + "\":";
+    int p = obj.indexOf(needle);
+    if (p < 0) return false;
+    p += needle.length();
+    while (p < (int)obj.length() && (obj[p] == ' ' || obj[p] == '\t' || obj[p] == '\n' || obj[p] == '\r')) p++;
+
+    // allow either plain number or quoted hex like "#RRGGBB"
+    if (p < (int)obj.length() && obj[p] == '\"') {
+        String s;
+        if (!jsonFindValueString(obj, key, s)) return false;
+        if (s.startsWith("#")) s = s.substring(1);
+        out = (uint32_t) strtoul(s.c_str(), NULL, 16);
+        return true;
+    }
+
+    unsigned long v = 0;
+    bool any = false;
+    while (p < (int)obj.length()) {
+        char ch = obj[p];
+        if (ch < '0' || ch > '9') break;
+        v = v * 10 + (ch - '0');
+        any = true;
+        p++;
+    }
+    if (!any) return false;
+    out = (uint32_t)v;
+    return true;
+}
+
+static bool parseUidString(const String &uidStr, uint8_t *outUid, size_t uidLenExpected = 7) {
+    // Accept "AA:BB:CC:DD:EE:FF:GG" or "AABBCC..." (hex pairs)
+    for (size_t i = 0; i < uidLenExpected; i++) outUid[i] = 0;
+
+    String s = uidStr;
+    s.trim();
+    s.toUpperCase();
+
+    // Remove separators
+    s.replace(":", "");
+    s.replace("-", "");
+    s.replace(" ", "");
+
+    if ((int)s.length() < (int)(uidLenExpected * 2)) return false;
+
+    for (size_t i = 0; i < uidLenExpected; i++) {
+        String byteStr = s.substring(i * 2, i * 2 + 2);
+        char *endp = nullptr;
+        long v = strtol(byteStr.c_str(), &endp, 16);
+        if (endp == byteStr.c_str()) return false;
+        outUid[i] = (uint8_t)(v & 0xFF);
+    }
+    return true;
+}
+
+static bool extractJsonArrayOfStrings(const String &json, const String &key, String outArr[], int maxItems) {
+    // Looks for "key":["a","b",...]
+    String needle = "\"" + key + "\":[";
+    int p = json.indexOf(needle);
+    if (p < 0) return false;
+    p += needle.length();
+
+    int count = 0;
+    while (p < (int)json.length() && count < maxItems) {
+        while (p < (int)json.length() && (json[p] == ' ' || json[p] == '\t' || json[p] == '\n' || json[p] == '\r' || json[p] == ',')) p++;
+        if (p >= (int)json.length()) break;
+        if (json[p] == ']') break;
+        if (json[p] != '\"') break;
+        p++;
+
+        String val = "";
+        bool esc = false;
+        for (; p < (int)json.length(); p++) {
+            char ch = json[p];
+            if (esc) { val += ch; esc = false; continue; }
+            if (ch == '\\') { val += ch; esc = true; continue; }
+            if (ch == '\"') break;
+            val += ch;
+        }
+        val = jsonUnescape(val);
+        val.trim();
+        outArr[count++] = val;
+
+        // move past closing quote
+        while (p < (int)json.length() && json[p] != ',' && json[p] != ']') p++;
+        if (p < (int)json.length() && json[p] == ']') break;
+    }
+
+    // Clear remaining
+    for (int i = count; i < maxItems; i++) outArr[i] = "";
+    return true;
 }
 
 static String extractMetaContent(const String &html, const String &needle) {
@@ -430,6 +584,7 @@ void initWebServer() {
         html += "input, select{margin:0; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box; max-width:100%; font-size:16px;} ";
         html += ".btn-search{background:#5765f2; color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; width:80%; margin-bottom:10px;} ";
         html += ".btn-save{background:#2ed573; color:white; border:none; padding:12px; width:80%; border-radius:8px; cursor:pointer; font-size:16px;} ";
+        html += ".btn-save{box-sizing:border-box;} ";
         html += ".btn-del{background:#ff4757; color:white; border:none; padding:5px 10px; border-radius:5px; font-size:0.8em; display:inline-block; text-decoration:none;} ";
         html += ".btn-del:active{opacity:0.9;} ";
         html += ".details{margin-top:12px; text-align:left;} ";
@@ -439,7 +594,7 @@ void initWebServer() {
         html += ".field label{display:block; font-size:0.8em; color:#555; margin-bottom:4px;} ";
         html += ".field input, .field select{width:100%; max-width:100%; display:block;} ";
         html += "input[type=date]{width:170px;} ";
-        html += ".btn-secondary{background:#eef1ff; color:#3b4ce2; border:none; padding:10px; width:100%; border-radius:8px; cursor:pointer; margin-top:6px; font-size:16px;} ";
+        html += ".btn-secondary{background:#eef1ff; color:#3b4ce2; border:none; padding:10px 12px; width:100%; border-radius:8px; cursor:pointer; margin-top:6px; font-size:16px; box-sizing:border-box; display:block;} ";
         html += ".scan-btn{width:auto; padding:10px 14px; margin:0; font-size:16px;} ";
         html += ".scan-cancel{background:#ff4757; color:#fff; border:none; border-radius:8px; cursor:pointer;} ";
         html += "</style>";
@@ -490,6 +645,12 @@ void initWebServer() {
                 html += "<div class='card' style='background:#d4edda;color:#155724;'>Band saved &#10003;</div>";
             } else if(msg == "scan_cancel") {
                 html += "<div class='card' style='background:#fff3cd;color:#856404;'>Scan cancelled.</div>";
+            } else if(msg == "export_ready") {
+                html += "<div class='card' style='background:#d1ecf1;color:#0c5460;'>Backup ready. Your download should start automatically.</div>";
+            } else if(msg == "import_ok") {
+                html += "<div class='card' style='background:#d4edda;color:#155724;'>Import complete &#10003;</div>";
+            } else if(msg == "import_fail") {
+                html += "<div class='card' style='background:#f8d7da;color:#721c24;'>Import failed. Paste a valid backup JSON from this hub.</div>";
             }
         }
 
@@ -647,6 +808,18 @@ void initWebServer() {
             html += "<div class='settings-header' onclick='toggleSettings()'>Settings (Owners, Locations, Hub)</div>";
             html += "<div class='settings-body' id='settings'>";
 
+            // BACKUP / RESTORE
+            html += "<hr><h3>Backup / Restore</h3>";
+            html += "<div class='meta' style='margin-bottom:10px;'>Export your bands before flashing new firmware. Import restores bands + owners + locations + hub timeouts.</div>";
+            html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/export' download>Export Backup (JSON)</a>";
+
+            html += "<hr><form action='/import' method='POST'>";
+            html += "<div class='field'><label>Import Backup JSON</label>";
+            html += "<textarea name='data' style='width:100%;min-height:140px;padding:10px;border-radius:8px;border:1px solid #ccc;font-size:14px;' placeholder='Paste exported JSON here...'></textarea>";
+            html += "</div>";
+            html += "<input type='submit' class='btn-save' value='Import Backup' onclick='return confirm(\"Import will overwrite all stored bands. Continue?\")'>";
+            html += "</form>";
+
             // OWNERS
             html += "<h3>Owners</h3>";
             for(int i=0; i<10; i++) {
@@ -664,10 +837,12 @@ void initWebServer() {
                     html += "</div>";
                 }
             }
-            html += "<hr><form action='/addcat' method='GET'>";
+            html += "<hr><form action='/addcat' method='GET' style='margin-top:10px;'>";
             html += "<input type='hidden' name='type' value='o'>";
-            html += "<input type='text' name='val' placeholder='New owner name' required><br>";
-            html += "<input type='submit' class='btn-save' value='Add Owner'></form>";
+            html += "<div style='display:flex; gap:10px; align-items:center;'>";
+            html += "<input type='text' name='val' placeholder='New owner name' required style='flex:1;'>";
+            html += "<input type='submit' class='btn-save' value='Add Owner' style='width:auto; padding:10px 14px;'>";
+            html += "</div></form>";
 
             // LOCATIONS
             html += "<hr><h3>Locations</h3>";
@@ -686,16 +861,14 @@ void initWebServer() {
                     html += "</div>";
                 }
             }
-            html += "<hr><form action='/addcat' method='GET'>";
+            html += "<hr><form action='/addcat' method='GET' style='margin-top:10px;'>";
             html += "<input type='hidden' name='type' value='l'>";
-            html += "<input type='text' name='val' placeholder='New location name' required><br>";
-            html += "<input type='submit' class='btn-save' value='Add Location'></form>";
+            html += "<div style='display:flex; gap:10px; align-items:center;'>";
+            html += "<input type='text' name='val' placeholder='New location name' required style='flex:1;'>";
+            html += "<input type='submit' class='btn-save' value='Add Location' style='width:auto; padding:10px 14px;'>";
+            html += "</div></form>";
 
-            // HUB SETTINGS
-            html += "<hr><h3>Hub Settings</h3><form action='/settings' method='GET'>";
-            html += "Standby (Min): <input type='number' name='idle' value='" + String(idleTimeout / 60000) + "' min='1'><br>";
-            html += "Sleep (Min): <input type='number' name='sleep' value='" + String(sleepTimeout / 60000) + "' min='1'><br>";
-            html += "<input type='submit' class='btn-save' value='Save Settings'></form>";
+            // (Hub Settings removed)
 
             html += "</div></div>";
         }
@@ -703,17 +876,7 @@ void initWebServer() {
         request->send(200, "text/html; charset=utf-8", html);
     });
 
-    server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
-        if(request->hasParam("idle")) idleTimeout = request->getParam("idle")->value().toInt() * 60000;
-        if(request->hasParam("sleep")) sleepTimeout = request->getParam("sleep")->value().toInt() * 60000;
-        
-        prefs.begin("settings", false);
-        prefs.putUInt("idle", idleTimeout);
-        prefs.putUInt("sleep", sleepTimeout);
-        prefs.end();
-        
-        request->redirect("/");
-    });
+    // (Removed /settings handler)
 
     // ROUTE: Arm a web-driven scan (screen-less register)
     server.on("/scan_arm", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1033,6 +1196,245 @@ void initWebServer() {
             request->redirect("/?msg=category_updated");
         }
     });
+
+    // ROUTE: Export backup JSON bands + owners + locations + hub settings
+    server.on("/export", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json = "{";
+        json += "\"version\":1,";
+        json += "\"bandCount\":" + String(bandCount) + ",";
+        json += "\"bands\":[";
+
+        for(int i = 0; i < bandCount; i++) {
+            // UID string
+            char uidBuf[32] = {0};
+            formatUidString(registeredBands[i].uid, 7, uidBuf, sizeof(uidBuf));
+
+            if(i > 0) json += ",";
+
+            json += "{";
+            json += "\"uid\":\"" + jsonEscape(String(uidBuf)) + "\",";
+            json += "\"name\":\"" + jsonEscape(String(registeredBands[i].name)) + "\",";
+            json += "\"type\":\"" + jsonEscape(String(registeredBands[i].type)) + "\",";
+            json += "\"owner\":\"" + jsonEscape(String(registeredBands[i].owner)) + "\",";
+            json += "\"location\":\"" + jsonEscape(String(registeredBands[i].location)) + "\",";
+            json += "\"dateBought\":\"" + jsonEscape(String(registeredBands[i].dateBought)) + "\",";
+            json += "\"color\":" + String((unsigned int)registeredBands[i].color) + ",";
+
+            json += "\"imageUrl\":\"" + jsonEscape(String(registeredBands[i].imageUrl)) + "\",";
+            json += "\"mbcListing\":\"" + jsonEscape(String(registeredBands[i].mbcListing)) + "\",";
+            json += "\"releaseType\":\"" + jsonEscape(String(registeredBands[i].releaseType)) + "\",";
+            json += "\"releaseDate\":\"" + jsonEscape(String(registeredBands[i].releaseDate)) + "\",";
+            json += "\"releasedAt\":\"" + jsonEscape(String(registeredBands[i].releasedAt)) + "\",";
+            json += "\"bandColorName\":\"" + jsonEscape(String(registeredBands[i].bandColorName)) + "\",";
+            json += "\"iconColorName\":\"" + jsonEscape(String(registeredBands[i].iconColorName)) + "\",";
+            json += "\"originalPrice\":\"" + jsonEscape(String(registeredBands[i].originalPrice)) + "\",";
+            json += "\"sku\":\"" + jsonEscape(String(registeredBands[i].sku)) + "\"";
+            json += "}";
+        }
+
+        json += "],";
+
+        // Owners/Locations arrays
+        json += "\"owners\":[";
+        bool first = true;
+        for(int i = 0; i < 10; i++) {
+            if(ownersList[i][0] == '\0') continue;
+            if(!first) json += ",";
+            first = false;
+            json += "\"" + jsonEscape(String(ownersList[i])) + "\"";
+        }
+        json += "],";
+
+        json += "\"locations\":[";
+        first = true;
+        for(int i = 0; i < 10; i++) {
+            if(locationsList[i][0] == '\0') continue;
+            if(!first) json += ",";
+            first = false;
+            json += "\"" + jsonEscape(String(locationsList[i])) + "\"";
+        }
+        json += "],";
+
+        json += "\"settings\":{";
+        json += "\"idleTimeout\":" + String((unsigned int)idleTimeout) + ",";
+        json += "\"sleepTimeout\":" + String((unsigned int)sleepTimeout);
+        json += "}";
+
+        json += "}";
+
+        AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", json);
+        resp->addHeader("Content-Disposition", "attachment; filename=\"magicbandhub-backup.json\"");
+        request->send(resp);
+    });
+
+    // ROUTE: Import backup JSON overwrites all stored bands/categories/settings
+    server.on("/import", HTTP_POST, [](AsyncWebServerRequest *request){
+        if(!request->hasParam("data", true)) {
+            request->redirect("/?msg=import_fail");
+            return;
+        }
+
+        String data = request->getParam("data", true)->value();
+        data.trim();
+        if(data.length() < 20 || data.indexOf("\"bands\"") < 0) {
+            request->redirect("/?msg=import_fail");
+            return;
+        }
+
+        // Parse owners/locations (best-effort)
+        String ownersTmp[10];
+        String locationsTmp[10];
+        extractJsonArrayOfStrings(data, "owners", ownersTmp, 10);
+        extractJsonArrayOfStrings(data, "locations", locationsTmp, 10);
+
+        // Parse settings (best-effort)
+        int idleMs = (int)idleTimeout;
+        int sleepMs = (int)sleepTimeout;
+        // settings object may be nested; search in full JSON
+        jsonFindValueInt(data, "idleTimeout", idleMs);
+        jsonFindValueInt(data, "sleepTimeout", sleepMs);
+
+        // Extract bands array
+        int bandsPos = data.indexOf("\"bands\":[");
+        if(bandsPos < 0) { request->redirect("/?msg=import_fail"); return; }
+        int arrStart = data.indexOf("[", bandsPos);
+        int arrEnd = data.indexOf("]", arrStart);
+        if(arrStart < 0 || arrEnd < 0 || arrEnd <= arrStart) { request->redirect("/?msg=import_fail"); return; }
+
+        String arr = data.substring(arrStart + 1, arrEnd);
+
+        // Iterate objects: naive scan for {...}
+        int idx = 0;
+        int imported = 0;
+        while(idx < (int)arr.length() && imported < 50) {
+            int objStart = arr.indexOf("{", idx);
+            if(objStart < 0) break;
+
+            int depth = 0;
+            int objEnd = -1;
+            for(int p = objStart; p < (int)arr.length(); p++) {
+                if(arr[p] == '{') depth++;
+                else if(arr[p] == '}') {
+                    depth--;
+                    if(depth == 0) { objEnd = p; break; }
+                }
+            }
+            if(objEnd < 0) break;
+
+            String obj = arr.substring(objStart, objEnd + 1);
+
+            BandRecord br;
+            memset(&br, 0, sizeof(BandRecord));
+
+            String uidStr;
+            if(!jsonFindValueString(obj, "uid", uidStr)) { idx = objEnd + 1; continue; }
+            if(!parseUidString(uidStr, br.uid, 7)) { idx = objEnd + 1; continue; }
+
+            String v;
+            if(jsonFindValueString(obj, "name", v)) {
+                strncpy(br.name, v.c_str(), sizeof(br.name) - 1);
+                br.name[sizeof(br.name) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "type", v)) {
+                strncpy(br.type, v.c_str(), sizeof(br.type) - 1);
+                br.type[sizeof(br.type) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "owner", v)) {
+                strncpy(br.owner, v.c_str(), sizeof(br.owner) - 1);
+                br.owner[sizeof(br.owner) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "location", v)) {
+                strncpy(br.location, v.c_str(), sizeof(br.location) - 1);
+                br.location[sizeof(br.location) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "dateBought", v) && v.length() == 10) {
+                strncpy(br.dateBought, v.c_str(), sizeof(br.dateBought) - 1);
+                br.dateBought[sizeof(br.dateBought) - 1] = '\0';
+            }
+
+            uint32_t col = 0;
+            if(jsonFindValueUInt32(obj, "color", col)) br.color = col;
+
+            if(jsonFindValueString(obj, "imageUrl", v)) {
+                strncpy(br.imageUrl, v.c_str(), sizeof(br.imageUrl) - 1);
+                br.imageUrl[sizeof(br.imageUrl) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "mbcListing", v)) {
+                strncpy(br.mbcListing, v.c_str(), sizeof(br.mbcListing) - 1);
+                br.mbcListing[sizeof(br.mbcListing) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "releaseType", v)) {
+                strncpy(br.releaseType, v.c_str(), sizeof(br.releaseType) - 1);
+                br.releaseType[sizeof(br.releaseType) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "releaseDate", v)) {
+                strncpy(br.releaseDate, v.c_str(), sizeof(br.releaseDate) - 1);
+                br.releaseDate[sizeof(br.releaseDate) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "releasedAt", v)) {
+                strncpy(br.releasedAt, v.c_str(), sizeof(br.releasedAt) - 1);
+                br.releasedAt[sizeof(br.releasedAt) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "bandColorName", v)) {
+                strncpy(br.bandColorName, v.c_str(), sizeof(br.bandColorName) - 1);
+                br.bandColorName[sizeof(br.bandColorName) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "iconColorName", v)) {
+                strncpy(br.iconColorName, v.c_str(), sizeof(br.iconColorName) - 1);
+                br.iconColorName[sizeof(br.iconColorName) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "originalPrice", v)) {
+                strncpy(br.originalPrice, v.c_str(), sizeof(br.originalPrice) - 1);
+                br.originalPrice[sizeof(br.originalPrice) - 1] = '\0';
+            }
+            if(jsonFindValueString(obj, "sku", v)) {
+                strncpy(br.sku, v.c_str(), sizeof(br.sku) - 1);
+                br.sku[sizeof(br.sku) - 1] = '\0';
+            }
+
+            // Store in RAM
+            registeredBands[imported] = br;
+            imported++;
+
+            idx = objEnd + 1;
+        }
+
+        if(imported <= 0) {
+            request->redirect("/?msg=import_fail");
+            return;
+        }
+
+        bandCount = imported;
+
+        // Persist bands + categories + settings
+        prefs.begin("mbands", false);
+        prefs.clear();
+        prefs.putInt("count", bandCount);
+        for(int i = 0; i < bandCount; i++) {
+            prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
+        }
+
+        // Write owners/locations into o0.. / l0.. keys (compact)
+        for(int i = 0; i < 10; i++) {
+            String ok = "o" + String(i);
+            String lk = "l" + String(i);
+            if(ownersTmp[i].length() > 0) prefs.putString(ok.c_str(), ownersTmp[i]);
+            if(locationsTmp[i].length() > 0) prefs.putString(lk.c_str(), locationsTmp[i]);
+        }
+        prefs.end();
+
+        idleTimeout = (uint32_t)idleMs;
+        sleepTimeout = (uint32_t)sleepMs;
+        prefs.begin("settings", false);
+        prefs.putUInt("idle", idleTimeout);
+        prefs.putUInt("sleep", sleepTimeout);
+        prefs.end();
+
+        loadCategoriesFromPrefs();
+        fn_refresh_roller(NULL);
+
+        request->redirect("/?msg=import_ok");
+    });
 }
 
 bool tryConnectSavedWiFi() {
@@ -1051,3 +1453,4 @@ extern "C" {
     void startWebServer() { server.begin(); MDNS.begin("magicband"); }
     void stopWebServer() { server.end(); }
 }
+    
