@@ -7,6 +7,7 @@
 struct BandRecord {
     uint8_t uid[7];
     uint32_t color;
+    uint16_t themeId; // 0 = Default theme
     char name[40];
     char imageUrl[100];
     char type[20];

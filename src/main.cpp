@@ -39,6 +39,11 @@ typedef struct _lv_event_t lv_event_t;
 #define NFC_IRQ 17
 #define LCD_RST 14
 
+// --- Storage limits (keep unchanged for now; used throughout for consistency) ---
+#define MAX_BANDS 50
+#define MAX_OWNERS 10
+#define MAX_LOCATIONS 10
+
 AsyncWebServer server(80); 
 #if SCREEN_ENABLED
 TFT_eSPI tft = TFT_eSPI(240, 240); 
@@ -53,10 +58,10 @@ uint32_t idleTimeout = 60000;   // Default 1 min
 uint32_t sleepTimeout = 300000; // Default 5 min
 bool isScreenOn = true;
 
-BandRecord registeredBands[50];
+BandRecord registeredBands[MAX_BANDS];
 int bandCount = 0;
-char ownersList[10][20]; 
-char locationsList[10][20];
+char ownersList[MAX_OWNERS][20];
+char locationsList[MAX_LOCATIONS][20];
 
 // Make the C-linkage function visible to other files
 #if SCREEN_ENABLED
@@ -69,7 +74,7 @@ extern "C" void fn_refresh_roller(lv_event_t * e) { (void)e; }
 void loadCategoriesFromPrefs() {
     prefs.begin("mbands", true);
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < MAX_OWNERS; i++) {
         memset(ownersList[i], 0, sizeof(ownersList[i]));
         memset(locationsList[i], 0, sizeof(locationsList[i]));
 
@@ -137,6 +142,7 @@ void wakeScreen() {
     lastActivityTime = millis();
 }
 
+
 void runWhiteSwirl(int speed) {
     static uint8_t swirlPos = 0;
     strip.clear();
@@ -149,57 +155,325 @@ void runWhiteSwirl(int speed) {
     swirlPos = (swirlPos + 1) % LED_COUNT;
 }
 
-void handleSuccess(uint32_t color) {
-    if(isSuccessActive) return;
-    isSuccessActive = true;
-#if SCREEN_ENABLED
-    if(ui_mickeyScanner){
-        lv_obj_set_style_img_recolor(ui_mickeyScanner, lv_color_hex(color), 0);
-        lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 255, 0);
+// ---------------- Non-blocking success animation (state machine) ----------------
+static uint8_t  g_successStage = 0;     // 0=swirl,1=fill,2=pulse,3=done
+static uint8_t  g_successStep  = 0;     // step within stage
+static uint32_t g_successNextMs = 0;    // next tick time
+static uint32_t g_successColor = 0;     // final color used for pulse stage
+static int16_t  g_pulseBrightness = 30; // 30..255
+static int8_t   g_pulseDir = 1;         // +1 / -1
+static uint8_t  g_pulseCycles = 0;      // completed cycles
+
+static uint16_t g_successThemeId = 0;   // stored theme for pattern selection
+static uint32_t g_successBaseColor = 0; // original per-band color (theme 0)
+
+static uint32_t applyThemeToColor(uint32_t color, uint16_t themeId) {
+    // Theme 0 = use the per-band color as-is.
+    if(themeId == 0) return color;
+
+    switch(themeId) {
+        case 1: // Classic Green
+            return 0x00FF00;
+        case 2: // Comet Blue
+            return 0x2E86FF;
+        case 3: // Pulse Purple
+            return 0x7D3CFF;
+        case 4: // Rainbow (keep band color for now; true rainbow can be added later)
+            return color;
+        case 5: // Spooky Orange
+            return 0xFF5000;
+        case 6: // MNSSHP (pattern handled in tickSuccess; use purple for any UI recolor)
+            return 0x7D3CFF;
+        default:
+            return color;
     }
-#endif
-    // STAGE 1: White Comet Swirl (1 rotation)
-    for(int f=0; f < LED_COUNT; f++){
-        strip.clear();
-        for(int i=0; i<5; i++){
-            int p=(f-i+LED_COUNT)%LED_COUNT;
-            int b=255-(i*50); if(b<0) b=0;
-            strip.setPixelColor(p, strip.Color(b, b, b)); 
-        }
-        strip.show(); delay(SPEED_COMET);
-#if SCREEN_ENABLED
-        lv_timer_handler(); delay(1);
-#endif
+}
+
+static uint32_t wheelColor(uint8_t wheelPos) {
+    // Standard NeoPixel color wheel (0-255)
+    wheelPos = 255 - wheelPos;
+    if(wheelPos < 85) {
+        return strip.Color(255 - wheelPos * 3, 0, wheelPos * 3);
     }
-    // STAGE 2: Progressive Fill (White, 1 to 12)
+    if(wheelPos < 170) {
+        wheelPos -= 85;
+        return strip.Color(0, wheelPos * 3, 255 - wheelPos * 3);
+    }
+    wheelPos -= 170;
+    return strip.Color(wheelPos * 3, 255 - wheelPos * 3, 0);
+}
+
+static uint32_t blendRgb(uint32_t c1, uint32_t c2, uint8_t t) {
+    // Linear blend of two 0xRRGGBB colors. t=0 => c1, t=255 => c2
+    uint8_t r1 = (c1 >> 16) & 0xFF;
+    uint8_t g1 = (c1 >> 8) & 0xFF;
+    uint8_t b1 = (c1 >> 0) & 0xFF;
+
+    uint8_t r2 = (c2 >> 16) & 0xFF;
+    uint8_t g2 = (c2 >> 8) & 0xFF;
+    uint8_t b2 = (c2 >> 0) & 0xFF;
+
+    uint8_t r = (uint8_t)(((uint16_t)r1 * (255 - t) + (uint16_t)r2 * t) / 255);
+    uint8_t g = (uint8_t)(((uint16_t)g1 * (255 - t) + (uint16_t)g2 * t) / 255);
+    uint8_t b = (uint8_t)(((uint16_t)b1 * (255 - t) + (uint16_t)b2 * t) / 255);
+
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+static void drawSuccessSwirlAt(uint8_t pos) {
+    // Matches the old blocking STAGE 1 comet/swirl look
     strip.clear();
-    for(int i=0; i < LED_COUNT; i++) {
-        strip.setPixelColor(i, strip.Color(255, 255, 255));
-        strip.show(); delay(SPEED_FILL);
-#if SCREEN_ENABLED
-        lv_timer_handler(); delay(1);
-#endif
+    for(int i = 0; i < 5; i++) {
+        int p = (pos - i + LED_COUNT) % LED_COUNT;
+        int b = 255 - (i * 50);
+        if(b < 0) b = 0;
+        strip.setPixelColor(p, strip.Color(b, b, b));
     }
-    // STAGE 3: Pulse Breathing Fade (Band Color)
-    for(int pulse = 0; pulse < 2; pulse++){
-        for(int b = 30; b <= 255; b += 10){
-            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE);
+    strip.show();
 #if SCREEN_ENABLED
-            lv_timer_handler(); delay(1);
+    lv_timer_handler();
 #endif
+}
+
+static void startSuccess(uint32_t color, uint16_t themeId) {
+    if(isSuccessActive) return;
+
+    isSuccessActive = true;
+    g_successStage = 0;
+    g_successStep = 0;
+    g_successNextMs = millis();
+    g_pulseBrightness = 30;
+    g_pulseDir = 1;
+    g_pulseCycles = 0;
+
+    g_successThemeId = themeId;
+    g_successBaseColor = color;
+    g_successColor = applyThemeToColor(color, themeId);
+
+#if SCREEN_ENABLED
+    if(ui_mickeyScanner) {
+        lv_obj_set_style_img_recolor(ui_mickeyScanner, lv_color_hex(g_successColor), 0);
+        lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 255, 0);
+        lv_timer_handler();
+    }
+#endif
+}
+
+static void tickSuccess() {
+    if(!isSuccessActive) return;
+
+    uint32_t now = millis();
+    if((int32_t)(now - g_successNextMs) < 0) return;
+
+    switch(g_successStage) {
+        case 0: {
+            // STAGE 1: White comet/swirl (1 rotation)
+            drawSuccessSwirlAt(g_successStep);
+            g_successStep++;
+            g_successNextMs = now + SPEED_COMET;
+            if(g_successStep >= LED_COUNT) {
+                g_successStage = 1;
+                g_successStep = 0;
+                strip.clear();
+                strip.show();
+            }
+            break;
         }
-        for(int b = 255; b >= 30; b -= 10){
-            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(SPEED_PULSE);
+
+        case 1: {
+            // STAGE 2: Progressive fill (white, 1..12)
+            strip.clear();
+            for(uint8_t i = 0; i <= g_successStep && i < LED_COUNT; i++) {
+                strip.setPixelColor(i, strip.Color(255, 255, 255));
+            }
+            strip.show();
 #if SCREEN_ENABLED
-            lv_timer_handler(); delay(1);
+            lv_timer_handler();
 #endif
+            g_successStep++;
+            g_successNextMs = now + SPEED_FILL;
+            if(g_successStep >= LED_COUNT) {
+                g_successStage = 2;
+                g_successStep = 0;
+                g_pulseBrightness = 30;
+                g_pulseDir = 1;
+                g_pulseCycles = 0;
+
+                // Ensure starting brightness for theme patterns
+                strip.setBrightness(40);
+            }
+            break;
+        }
+
+        case 2: {
+            // STAGE 3: Theme-specific success pattern (non-blocking)
+            // - Themes 1/2/3/0: classic breathing pulse using g_successColor
+            // - Theme 4: true rainbow chase around the ring
+            // - Theme 5: spooky orange flicker with purple sparkles
+
+            if(g_successThemeId == 4) {
+                // Rainbow chase: 3 full color-wheel rotations
+                uint8_t offset = g_successStep;
+                for(uint8_t i = 0; i < LED_COUNT; i++) {
+                    // Spread wheel evenly across LEDs, then add moving offset
+                    uint8_t wp = (uint8_t)((i * (256 / LED_COUNT)) + offset);
+                    strip.setPixelColor(i, strip.gamma32(wheelColor(wp)));
+                }
+                strip.setBrightness(80);
+                strip.show();
+#if SCREEN_ENABLED
+                lv_timer_handler();
+#endif
+
+                uint8_t prev = g_successStep;
+                g_successStep = (uint8_t)(g_successStep + 8);
+                if(g_successStep < prev) {
+                    // overflow => completed one full loop
+                    g_pulseCycles++;
+                }
+
+                g_successNextMs = now + 25;
+                if(g_pulseCycles >= 3) {
+                    g_successStage = 3;
+                    g_successNextMs = now;
+                }
+                break;
+            }
+
+            if(g_successThemeId == 5) {
+                // Spooky pulse: slow purple breathing over orange base (no strobe)
+                // Uses a triangle-wave blend to avoid harsh flashing.
+
+                // Triangle wave 0..255..0 over 64 steps
+                uint8_t phase = (uint8_t)(g_successStep & 0x3F); // 0..63
+                uint8_t tri = (phase < 32) ? (uint8_t)(phase * 8) : (uint8_t)((63 - phase) * 8);
+
+                // Limit purple influence so it stays "spooky glow" rather than full purple
+                uint8_t purpleAmt = (uint8_t)((uint16_t)tri * 170 / 255); // 0..170
+
+                uint32_t baseOrange = 0xFF5000;
+                uint32_t spookyPurple = 0x7D3CFF;
+                uint32_t mixed = blendRgb(baseOrange, spookyPurple, purpleAmt);
+
+                // Fill ring with blended color
+                uint32_t mixedGamma = strip.gamma32(mixed);
+                for(uint8_t i = 0; i < LED_COUNT; i++) {
+                    strip.setPixelColor(i, mixedGamma);
+                }
+
+                // Occasional gentle "ember" sparkle (rare, not a flash)
+                if(random(0, 100) < 10) {
+                    uint8_t p = (uint8_t)random(0, LED_COUNT);
+                    uint32_t ember = strip.gamma32(blendRgb(mixed, spookyPurple, 200));
+                    strip.setPixelColor(p, ember);
+                }
+
+                // Keep brightness steady-ish; tiny wobble tied to the pulse
+                uint8_t b = (uint8_t)(55 + (tri / 6)); // ~55..97
+                strip.setBrightness(b);
+                strip.show();
+#if SCREEN_ENABLED
+                lv_timer_handler();
+#endif
+
+                g_successNextMs = now + 70; // slower update for smooth breathing
+                g_successStep++;
+
+                // ~4.5 seconds total (64 steps x 70ms)
+                if(g_successStep >= 64) {
+                    g_successStage = 3;
+                    g_successNextMs = now;
+                }
+                break;
+            }
+
+            if(g_successThemeId == 6) {
+                // MNSSHP: 6 equal segments of 2 LEDs each, alternating Purple/Green,
+                // rotating slowly anticlockwise for 5 seconds.
+
+                const uint32_t PURPLE = 0x7D3CFF;
+                const uint32_t GREEN  = 0x00FF00;
+
+                // Rotate anticlockwise by shifting pattern indices opposite the LED index.
+                uint8_t rot = g_successStep; // 0..11
+
+                for(uint8_t led = 0; led < LED_COUNT; led++) {
+                    // Pattern position after rotation (anticlockwise)
+                    uint8_t p = (uint8_t)((led + rot) % LED_COUNT);
+
+                    // 6 equal segments: each segment is 2 LEDs (0..1, 2..3, 4..5, 6..7, 8..9, 10..11)
+                    uint8_t seg = p / 2; // 0..5
+
+                    // Alternate colors by segment: even=purple, odd=green
+                    uint32_t c = (seg % 2 == 0) ? PURPLE : GREEN;
+                    strip.setPixelColor(led, strip.gamma32(c));
+                }
+
+                strip.setBrightness(85);
+                strip.show();
+#if SCREEN_ENABLED
+                lv_timer_handler();
+#endif
+
+                g_successNextMs = now + 200; // slow rotation
+
+                // Advance rotation (one LED step per tick)
+                g_successStep = (uint8_t)((g_successStep + 1) % LED_COUNT);
+
+                // Count ticks for duration: 25 ticks * 200ms = 5 seconds
+                g_pulseCycles++;
+                if(g_pulseCycles >= 25) {
+                    g_successStage = 3;
+                    g_successNextMs = now;
+                }
+                break;
+            }
+
+            // Default pulse (themes 0/1/2/3 and anything else): breathing fade using g_successColor
+            strip.fill(strip.gamma32(g_successColor));
+            strip.setBrightness((uint8_t)g_pulseBrightness);
+            strip.show();
+#if SCREEN_ENABLED
+            lv_timer_handler();
+#endif
+
+            g_pulseBrightness += (g_pulseDir * 10);
+            if(g_pulseBrightness >= 255) {
+                g_pulseBrightness = 255;
+                g_pulseDir = -1;
+            } else if(g_pulseBrightness <= 30) {
+                g_pulseBrightness = 30;
+                g_pulseDir = 1;
+                g_pulseCycles++;
+            }
+
+            g_successNextMs = now + SPEED_PULSE;
+            if(g_pulseCycles >= 2) {
+                g_successStage = 3;
+                g_successNextMs = now; // finish immediately next tick
+            }
+            break;
+        }
+
+        default: {
+            // DONE: reset UI + LEDs
+#if SCREEN_ENABLED
+            if(ui_mickeyScanner) lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 0, 0);
+#endif
+            strip.clear();
+            strip.setBrightness(40);
+            strip.show();
+
+            isSuccessActive = false;
+            break;
         }
     }
-#if SCREEN_ENABLED
-    if(ui_mickeyScanner) lv_obj_set_style_img_recolor_opa(ui_mickeyScanner, 0, 0);
-#endif
-    strip.clear(); strip.setBrightness(40); strip.show();
-    isSuccessActive = false;
+}
+// ------------------------------------------------------------------------------
+
+void handleSuccess(uint32_t color, uint16_t themeId) {
+    // Backwards-compatible wrapper: start the non-blocking animation.
+    startSuccess(color, themeId);
 }
 
 void reset_record_panels() {
@@ -310,7 +584,7 @@ extern "C" int web_confirm_save_pending_new(bool yes) {
         return -1;
     }
 
-    if(bandCount >= 50) {
+    if(bandCount >= MAX_BANDS) {
         g_webPendingNew = false;
         g_webScanArmed = false;
         return -1;
@@ -372,6 +646,7 @@ extern "C" {
                 strncpy(registeredBands[bandCount].type, style.c_str(), 19);
 
                 registeredBands[bandCount].color = 0x00FF00;
+                registeredBands[bandCount].themeId = 0;
                 memset(registeredBands[bandCount].imageUrl, 0, 100);
                 bandCount++;
                 prefs.begin("mbands", false); prefs.putInt("count", bandCount);
@@ -439,14 +714,16 @@ extern "C" {
 void setup() {
     setCpuFrequencyMhz(240);
     Serial.begin(115200);
+    // Seed RNG for theme patterns (spooky sparkles, etc.)
+    randomSeed((uint32_t)esp_random());
     // ----- Load bands from NVS (robust: tolerate missing keys / holes) -----
     prefs.begin("mbands", true);
 
     int storedCount = prefs.getInt("count", 0);
-    if (storedCount < 0 || storedCount > 50) storedCount = 0;
+    if (storedCount < 0 || storedCount > MAX_BANDS) storedCount = 0;
 
     int loaded = 0;
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < MAX_BANDS; i++) {
         String key = "b" + String(i);
 
         // Skip missing keys (prevents NOT_FOUND spam)
@@ -468,7 +745,7 @@ void setup() {
         // Accept record and compact into the front of the array
         registeredBands[loaded] = tmp;
         loaded++;
-        if (loaded >= 50) break;
+        if (loaded >= MAX_BANDS) break;
     }
 
     bandCount = loaded;
@@ -587,11 +864,14 @@ void setup() {
 }
 
 void loop() {
-#if SCREEN_ENABLED
+    #if SCREEN_ENABLED
     lv_timer_handler(); 
     handleStandby();
     updateClock();
-#endif
+    #endif
+
+    // Non-blocking success animation tick (runs in screenless + screen builds)
+    tickSuccess();
 
 #if SCREEN_ENABLED
     static lv_obj_t * last_scr = NULL;
@@ -609,19 +889,20 @@ void loop() {
 #endif
     
     static int lc = 0; if (bandCount != lc) { fn_refresh_roller(NULL); lc = bandCount; }
-    if (isWaitingForUID) { 
-        static uint32_t la = 0; 
-        if (millis() - la > SPEED_MANUAL) { la = millis(); runWhiteSwirl(SPEED_MANUAL); } 
+    if (!isSuccessActive && isWaitingForUID) {
+        static uint32_t la = 0;
+        if (millis() - la > SPEED_MANUAL) { la = millis(); runWhiteSwirl(SPEED_MANUAL); }
     }
 
     // Web-driven scan animation (screen-less register)
-    if (g_webScanArmed && !g_webScanHasResult) {
+    if (!isSuccessActive && g_webScanArmed && !g_webScanHasResult) {
         static uint32_t la2 = 0;
         if (millis() - la2 > SPEED_MANUAL) {
             la2 = millis();
             runWhiteSwirl(SPEED_MANUAL);
         }
     }
+
 
     static uint32_t ls = 0;
     if (millis() - ls > 400) {
@@ -685,6 +966,7 @@ void loop() {
                     g_webPendingRecord.type[sizeof(g_webPendingRecord.type) - 1] = '\0';
 
                     g_webPendingRecord.color = 0x00FF00;
+                    g_webPendingRecord.themeId = 0;
                     g_webPendingNew = true;
                 }
             }
@@ -694,7 +976,7 @@ void loop() {
 
             if (idx != -1) {
                 // Only update label if we are on the main scanner screen
-                handleSuccess(registeredBands[idx].color); 
+                handleSuccess(registeredBands[idx].color, registeredBands[idx].themeId);
             }
             else if (isWaitingForUID) {
                 // Manual registration via button
@@ -721,6 +1003,7 @@ void loop() {
 
                 strncpy(registeredBands[bandCount].type, style.c_str(), 19);
                 registeredBands[bandCount].color = 0x00FF00;
+                registeredBands[bandCount].themeId = 0;
                 memset(registeredBands[bandCount].imageUrl, 0, 100);
                 bandCount++;
                 prefs.begin("mbands", false); prefs.putInt("count", bandCount);
@@ -732,10 +1015,10 @@ void loop() {
 #if SCREEN_ENABLED
                 if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
 #endif
-                handleSuccess(0x00FF00); 
+                handleSuccess(0x00FF00, 0); 
             }
             else {
-                handleSuccess(0x00FF00);
+                handleSuccess(0x00FF00, 0);
 #if SCREEN_ENABLED
                 memcpy(tempRecord.uid, uid, 7); 
                 if(ui_RegisterConfirmPnl) lv_obj_clear_flag(ui_RegisterConfirmPnl, LV_OBJ_FLAG_HIDDEN);

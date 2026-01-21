@@ -9,10 +9,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-extern BandRecord registeredBands[50];
+extern BandRecord registeredBands[];
 extern int bandCount;
-extern char ownersList[10][20];
-extern char locationsList[10][20];
+extern char ownersList[][20];
+extern char locationsList[][20];
 extern AsyncWebServer server;
 extern Preferences prefs;
 // NEW: Access the timeout variables from main.cpp
@@ -57,6 +57,29 @@ static String jsonEscape(const String &in) {
     s.replace("\n", " ");
     s.replace("\r", " ");
     return s;
+}
+
+// ---- Theme definitions (IDs stored in BandRecord.themeId) ----
+// Keep this list stable; you can expand later.
+static const char* kThemeNames[] = {
+    "Default",
+    "Classic Green",
+    "Comet Blue",
+    "Pulse Purple",
+    "Rainbow",
+    "Spooky",
+    "MNSSHP"
+};
+static const int kThemeCount = (int)(sizeof(kThemeNames) / sizeof(kThemeNames[0]));
+
+static String buildThemeSelectOptions(uint16_t currentId) {
+    String out;
+    for (int i = 0; i < kThemeCount; i++) {
+        String sel = ((uint16_t)i == currentId) ? "selected" : "";
+        out += "<option value='" + String(i) + "' " + sel + ">"
+            + htmlEscape(String(kThemeNames[i])) + "</option>";
+    }
+    return out;
 }
 
 // --- Minimal JSON helpers (sufficient for importing OUR exported backup) ---
@@ -787,7 +810,15 @@ void initWebServer() {
                 // Appearance Section
                 html += "<div class='section'>";
                 html += "<div class='section-title'>Appearance</div>";
+
+                // Theme dropdown
+                html += "<div class='field'><label>Theme</label><select name='theme'>";
+                html += buildThemeSelectOptions(registeredBands[i].themeId);
+                html += "</select></div>";
+
+                // Color picker
                 html += "<div class='field'><label>Scanning Lights Colour</label><input type='color' name='color' value='" + String(hStr) + "' style='width:60px;'></div>";
+
                 html += "<input type='submit' value='Save Changes' class='btn-save'>";
                 html += "</div>";
                 html += "</form>";
@@ -1014,6 +1045,18 @@ void initWebServer() {
                     }
                 }
 
+                // Theme: apply if present; allow 0 (Default)
+                {
+                    if (request->hasParam("theme")) {
+                        String t = request->getParam("theme")->value();
+                        t.trim();
+                        int tid = t.toInt();
+                        if (tid < 0) tid = 0;
+                        if (tid >= kThemeCount) tid = kThemeCount - 1;
+                        registeredBands[id].themeId = (uint16_t)tid;
+                    }
+                }
+
                 prefs.begin("mbands", false);
                 prefs.putBytes(("b" + String(id)).c_str(), &registeredBands[id], sizeof(BandRecord));
                 prefs.end();
@@ -1219,6 +1262,7 @@ void initWebServer() {
             json += "\"location\":\"" + jsonEscape(String(registeredBands[i].location)) + "\",";
             json += "\"dateBought\":\"" + jsonEscape(String(registeredBands[i].dateBought)) + "\",";
             json += "\"color\":" + String((unsigned int)registeredBands[i].color) + ",";
+            json += "\"themeId\":" + String((unsigned int)registeredBands[i].themeId) + ",";
 
             json += "\"imageUrl\":\"" + jsonEscape(String(registeredBands[i].imageUrl)) + "\",";
             json += "\"mbcListing\":\"" + jsonEscape(String(registeredBands[i].mbcListing)) + "\",";
@@ -1354,6 +1398,15 @@ void initWebServer() {
 
             uint32_t col = 0;
             if(jsonFindValueUInt32(obj, "color", col)) br.color = col;
+
+            int theme = 0;
+            if (jsonFindValueInt(obj, "themeId", theme)) {
+                if (theme < 0) theme = 0;
+                if (theme >= kThemeCount) theme = kThemeCount - 1;
+                br.themeId = (uint16_t)theme;
+            } else {
+                br.themeId = 0;
+            }
 
             if(jsonFindValueString(obj, "imageUrl", v)) {
                 strncpy(br.imageUrl, v.c_str(), sizeof(br.imageUrl) - 1);
