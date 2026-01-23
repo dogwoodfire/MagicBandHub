@@ -1,13 +1,22 @@
+#ifndef SCREEN_ENABLED
+#define SCREEN_ENABLED 0
+#endif
+#include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "web_portal.h"
 #include <WiFi.h>
 #include <Preferences.h>
 #include <ESPmDNS.h>
+#if SCREEN_ENABLED
 #include <lvgl.h>
 #include "ui/ui.h"
+#else
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+// Forward-declare LVGL event type so we can keep stub/extern signatures without pulling LVGL in.
+typedef struct _lv_event_t lv_event_t;
+#endif
 
 extern BandRecord registeredBands[];
 extern int bandCount;
@@ -15,7 +24,7 @@ extern char ownersList[][20];
 extern char locationsList[][20];
 extern AsyncWebServer server;
 extern Preferences prefs;
-// NEW: Access the timeout variables from main.cpp
+// Access the timeout variables from main.cpp
 extern uint32_t idleTimeout;
 extern uint32_t sleepTimeout;
 
@@ -1498,12 +1507,34 @@ bool tryConnectSavedWiFi() {
     if(ssid == "") return false;
     WiFi.begin(ssid.c_str(), pass.c_str());
     int attempt = 0;
-    while (WiFi.status() != WL_CONNECTED && attempt < 30) { delay(500); attempt++; lv_timer_handler(); }
+    while (WiFi.status() != WL_CONNECTED && attempt < 30) {
+        delay(500);
+        attempt++;
+#if SCREEN_ENABLED
+        lv_timer_handler();
+#endif
+    }
     return (WiFi.status() == WL_CONNECTED);
 }
 
 extern "C" {
-    void startWebServer() { server.begin(); MDNS.begin("magicband"); }
-    void stopWebServer() { server.end(); }
+    void startWebServer() {
+        server.begin();
+
+        // mDNS only works once WiFi is actually connected.
+        if (!MDNS.begin("magicband")) {
+            Serial.println("[MDNS] begin failed");
+            return;
+        }
+
+        // Advertise HTTP so browsers/resolvers discover it as a web server.
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("[MDNS] http://magicband.local/");
+    }
+
+    void stopWebServer() {
+        server.end();
+        MDNS.end();
+    }
 }
     

@@ -28,16 +28,45 @@ typedef struct _lv_event_t lv_event_t;
 #define SPEED_MANUAL 60      
 
 // Hardware Config
-#define LED_PIN 21
+// NOTE: Most pins are provided via PlatformIO build_flags (-D ...). These are safe fallbacks.
+#ifndef LED_PIN
+// Default for the Freenove ESP32-S3 Lite wiring (your new board)
+#define LED_PIN 4
+#endif
+#ifndef LED_COUNT
 #define LED_COUNT 12
-#define TFT_BL 2 
+#endif
+
+// PN532 (I2C)
+#ifndef NFC_SDA
+// Default for the Freenove ESP32-S3 Lite wiring (your new board)
+#define NFC_SDA 8
+#endif
+#ifndef NFC_SCL
+#define NFC_SCL 9
+#endif
+#ifndef NFC_IRQ
+#define NFC_IRQ 10
+#endif
+#ifndef NFC_RST
+#define NFC_RST 11
+#endif
+
+// Optional screen/touch pins (only used when SCREEN_ENABLED=1)
+#if SCREEN_ENABLED
+#ifndef TFT_BL
+#define TFT_BL 2
+#endif
+#ifndef TOUCH_SDA
 #define TOUCH_SDA 6
+#endif
+#ifndef TOUCH_SCL
 #define TOUCH_SCL 7
+#endif
+#ifndef TOUCH_RST
 #define TOUCH_RST 13
-#define NFC_SDA 15
-#define NFC_SCL 16
-#define NFC_IRQ 17
-#define LCD_RST 14
+#endif
+#endif
 
 // --- Storage limits (keep unchanged for now; used throughout for consistency) ---
 #define MAX_BANDS 50
@@ -49,7 +78,7 @@ AsyncWebServer server(80);
 TFT_eSPI tft = TFT_eSPI(240, 240); 
 #endif
 TwoWire I2C_NFC = TwoWire(1); 
-Adafruit_PN532 nfc(NFC_IRQ, LCD_RST, &I2C_NFC); 
+Adafruit_PN532 nfc(NFC_IRQ, NFC_RST, &I2C_NFC); 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 Preferences prefs;
 
@@ -108,6 +137,7 @@ volatile bool g_webScanArmed = false;        // web requested a scan
 volatile bool g_webScanHasResult = false;    // a tag was seen while armed
 volatile bool g_webScanIsKnown = false;      // result matched a registered band
 volatile int  g_webScanKnownIndex = -1;      // index if known, else -1
+volatile bool g_webScanResultConsumed = false; // success animation already triggered for current web scan result
 volatile uint8_t g_webScanUidLen = 0;        // UID length
 volatile uint8_t g_webScanUid[10] = {0};     // UID bytes (up to 10)
 char g_webScanUidStr[32] = {0};              // "04:AA:..." string
@@ -154,6 +184,8 @@ void runWhiteSwirl(int speed) {
     strip.show();
     swirlPos = (swirlPos + 1) % LED_COUNT;
 }
+
+
 
 // ---------------- Non-blocking success animation (state machine) ----------------
 static uint8_t  g_successStage = 0;     // 0=swirl,1=fill,2=pulse,3=done
@@ -249,6 +281,11 @@ static void startSuccess(uint32_t color, uint16_t themeId) {
     g_successThemeId = themeId;
     g_successBaseColor = color;
     g_successColor = applyThemeToColor(color, themeId);
+
+    // Ensure we don't leave the ring in the last "scan swirl" frame.
+    strip.setBrightness(40);
+    strip.clear();
+    strip.show();
 
 #if SCREEN_ENABLED
     if(ui_mickeyScanner) {
@@ -529,6 +566,7 @@ static void computeBandTypeFromUidStr(const char *uidStr, char *out, size_t outS
 extern "C" void web_arm_scan() {
     g_webScanArmed = true;
     g_webScanHasResult = false;
+    g_webScanResultConsumed = false;
     g_webScanIsKnown = false;
     g_webScanKnownIndex = -1;
     g_webScanUidLen = 0;
@@ -537,11 +575,33 @@ extern "C" void web_arm_scan() {
     g_webScanTypeStr[0] = '\0';
     g_webPendingNew = false;
     memset(&g_webPendingRecord, 0, sizeof(g_webPendingRecord));
+
+    // Reset LED state so every web-armed scan starts clean.
+    isSuccessActive = false;
+    g_successStage = 0;
+    g_successStep = 0;
+    g_pulseCycles = 0;
+    // Make it super obvious that the firmware received the web "arm scan" request.
+    // If you don't see this flash, it's not an animation issue — it's LED/pin/power.
+
+    // Ensure we start from a known cleared state after the flash.
+    strip.setBrightness(40);
+    strip.clear();
+    strip.show();
 }
 
 extern "C" void web_cancel_scan() {
     g_webScanArmed = false;
     g_webPendingNew = false;
+    g_webScanResultConsumed = false;
+    // Cancel any in-progress success animation and clear LEDs.
+    isSuccessActive = false;
+    g_successStage = 0;
+    g_successStep = 0;
+    g_pulseCycles = 0;
+    strip.setBrightness(40);
+    strip.clear();
+    strip.show();
 }
 
 extern "C" bool web_has_scan_result() {
@@ -714,6 +774,9 @@ extern "C" {
 void setup() {
     setCpuFrequencyMhz(240);
     Serial.begin(115200);
+    Serial.printf("[PINS] LED=%d count=%d  NFC SDA=%d SCL=%d IRQ=%d RST=%d\n",
+              (int)LED_PIN, (int)LED_COUNT, (int)NFC_SDA, (int)NFC_SCL, (int)NFC_IRQ, (int)NFC_RST);
+    Serial.printf("[LED] init: LED_PIN=%d LED_COUNT=%d\n", (int)LED_PIN, (int)LED_COUNT);
     // Seed RNG for theme patterns (spooky sparkles, etc.)
     randomSeed((uint32_t)esp_random());
     // ----- Load bands from NVS (robust: tolerate missing keys / holes) -----
@@ -817,10 +880,20 @@ void setup() {
     // --- START NFC I2C (always-on, screenless friendly) ---
     I2C_NFC.begin(NFC_SDA, NFC_SCL, 100000);
     I2C_NFC.setTimeOut(20);
-    if(nfc.begin()) nfc.SAMConfig();
 
-    // LEDs always-on
-    strip.begin(); strip.setBrightness(40); strip.show();
+    // Ensure PN532 reset pin is in a known state before init.
+    pinMode(NFC_RST, OUTPUT);
+    digitalWrite(NFC_RST, HIGH);
+    delay(5);
+
+        if(nfc.begin()) {
+            nfc.SAMConfig();
+        }
+
+        strip.begin();
+    strip.setBrightness(40);
+    strip.show();
+    Serial.printf("[LED] ready on GPIO%d (%d px)\n", (int)LED_PIN, (int)LED_COUNT);
 
 #if SCREEN_ENABLED
     lv_init(); tft.begin(); tft.setRotation(0);
@@ -845,20 +918,56 @@ void setup() {
     if(ui_NewBandConfirm) lv_obj_add_event_cb(ui_NewBandConfirm, ui_event_RegisterFromPopup, LV_EVENT_CLICKED, NULL);
 #endif
 
-    initWebServer(); 
+    initWebServer();
+
+    // Ensure WiFi stack is up before we attempt saved WiFi.
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    delay(50);
+
+    Serial.printf("[WIFI] mode=%d status=%d\n", (int)WiFi.getMode(), (int)WiFi.status());
+    Serial.println("[WIFI] attempting tryConnectSavedWiFi()...");
+
+    if (tryConnectSavedWiFi()) {
+        isWiFiActive = true;
+
+        Serial.printf("[WIFI] connected: SSID='%s'\n", WiFi.SSID().c_str());
+        Serial.print("[WIFI] IP: ");
+        Serial.println(WiFi.localIP());
+        Serial.print("[WIFI] MAC: ");
+        Serial.println(WiFi.macAddress());
+
+        startWebServer();
+        Serial.println("[WEB] server started (STA). Look for [MDNS] http://magicband.local/" );
+
 #if SCREEN_ENABLED
         if(ui_StatusLabel) {
             String msg = "Connected to: " + WiFi.SSID();
             lv_label_set_text(ui_StatusLabel, msg.c_str());
         }
 #endif
-    if (tryConnectSavedWiFi()) { 
-        isWiFiActive = true; 
-        WiFi.setSleep(false);
-        startWebServer(); 
+
     } else {
+        // Fall back to SoftAP so the portal is always reachable.
+        Serial.printf("[WIFI] STA connect failed; status=%d. Starting SoftAP...\n", (int)WiFi.status());
+
+        WiFi.mode(WIFI_AP);
+        WiFi.setSleep(false);
+
+        const char* apSsid = "MagicBand-Hub";
+        const char* apPass = "password123";
+        bool apOk = WiFi.softAP(apSsid, apPass);
+
+        Serial.printf("[AP] softAP=%d SSID='%s'\n", apOk ? 1 : 0, apSsid);
+        Serial.print("[AP] IP: ");
+        Serial.println(WiFi.softAPIP());
+
+        isWiFiActive = apOk;
+        startWebServer();
+        Serial.println("[WEB] server started (AP). Use http://192.168.4.1/" );
+
 #if SCREEN_ENABLED
-        if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Tap Bellow to Set Up Wifi");
+        if(ui_StatusLabel) lv_label_set_text(ui_StatusLabel, "Hotspot Active");
 #endif
     }
 }
@@ -872,6 +981,7 @@ void loop() {
 
     // Non-blocking success animation tick (runs in screenless + screen builds)
     tickSuccess();
+
 
 #if SCREEN_ENABLED
     static lv_obj_t * last_scr = NULL;
@@ -903,10 +1013,28 @@ void loop() {
         }
     }
 
+    // Safety net: if the web scan has a result and LEDs are idle, trigger success animation ONCE.
+    // This prevents the ring from freezing on the last "scan swirl" frame, without looping forever.
+    if (!isSuccessActive && g_webScanArmed && g_webScanHasResult && !g_webScanResultConsumed) {
+        g_webScanResultConsumed = true;
+        if (g_webScanIsKnown && g_webScanKnownIndex >= 0 && g_webScanKnownIndex < bandCount) {
+            handleSuccess(registeredBands[g_webScanKnownIndex].color, registeredBands[g_webScanKnownIndex].themeId);
+        } else {
+            handleSuccess(0x00FF00, 0);
+        }
+    }
+
 
     static uint32_t ls = 0;
     if (millis() - ls > 400) {
         ls = millis();
+
+        // If we're already in the middle of the success animation, ignore any new scans.
+        // This prevents double-triggers when the same band is held on the reader.
+        if (isSuccessActive) {
+            return;
+        }
+
         uint8_t uid[7], len;
         if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &len, 50)) {
             wakeScreen();
@@ -941,6 +1069,9 @@ void loop() {
                 g_webScanKnownIndex = kidx;
                 g_webScanIsKnown = (kidx != -1);
                 g_webScanHasResult = true;
+                // We will mark this consumed at the moment we actually trigger the success animation.
+                // (Prevents the "safety net" block from replaying the animation a second time.)
+                g_webScanResultConsumed = false;
 
                 if(!g_webScanIsKnown) {
                     // Stage a new record (do not commit until user confirms)
@@ -975,6 +1106,9 @@ void loop() {
             for (int i = 0; i < bandCount; i++) if (memcmp(uid, registeredBands[i].uid, 7) == 0) { idx = i; break; }
 
             if (idx != -1) {
+                // If this scan came from the web-armed flow, ensure we only animate once.
+                if (g_webScanArmed) g_webScanResultConsumed = true;
+
                 // Only update label if we are on the main scanner screen
                 handleSuccess(registeredBands[idx].color, registeredBands[idx].themeId);
             }
@@ -1015,9 +1149,11 @@ void loop() {
 #if SCREEN_ENABLED
                 if(ui_ScanBandPnl3) lv_obj_clear_flag(ui_ScanBandPnl3, LV_OBJ_FLAG_HIDDEN);
 #endif
+                if (g_webScanArmed) g_webScanResultConsumed = true;
                 handleSuccess(0x00FF00, 0); 
             }
             else {
+                if (g_webScanArmed) g_webScanResultConsumed = true;
                 handleSuccess(0x00FF00, 0);
 #if SCREEN_ENABLED
                 memcpy(tempRecord.uid, uid, 7); 
