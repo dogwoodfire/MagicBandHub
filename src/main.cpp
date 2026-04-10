@@ -252,7 +252,7 @@ void loop() {
 
     // --- NFC SCAN ---
     static uint32_t lastNFC = 0;
-    if (millis() - lastNFC > 500 && !isSuccessActive) {
+    if (millis() - lastNFC > 150 && !isSuccessActive) {
         lastNFC = millis();
         uint8_t uid[7], len;
         // Check with short timeout so it doesn't freeze buttons
