@@ -12,6 +12,10 @@
 #include "esp_sntp.h"
 #include <HTTPClient.h>
 
+// Audio and SD Support
+#include "Audio_ES8311.h"
+#include "SD_Card.h"
+
 struct _lv_event_t; 
 
 // --- Hardware Pins ---
@@ -25,6 +29,7 @@ struct _lv_event_t;
 // --- Globals ---
 Adafruit_PN532 nfc(NFC_IRQ, NFC_RST, &Wire); 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
+Audio audio; 
 
 Preferences prefs;
 AsyncWebServer server(80); 
@@ -94,66 +99,56 @@ extern "C" {
     }
     void fn_refresh_roller(struct _lv_event_t * e) { }
     void web_arm_scan() { 
-        clearWebScanData(); // Wipe any old/stale data first
+        clearWebScanData(); 
         Serial.println("Registration ARMED"); 
         g_webScanArmed = true; 
     }
-
-    void web_cancel_scan() { 
-        clearWebScanData(); 
-        Serial.println("Registration Cancelled/Timed Out.");
-    }
-
-    int web_confirm_save_pending_new(bool yes) {
-        if(!yes) { 
-            clearWebScanData(); // Wipes the strings so the web UI sees "idle"
-            Serial.println("Registration Dismissed by User.");
-            return -1; 
-        }
-
-        if(bandCount >= 50) { clearWebScanData(); return -1; }
-
-        // Save logic
-        registeredBands[bandCount] = g_webPendingRecord;
-        int idx = bandCount; 
-        bandCount++;
-
-        prefs.begin("mbands", false);
-        prefs.putInt("count", bandCount);
-        prefs.putBytes(("b" + String(idx)).c_str(), &registeredBands[idx], sizeof(BandRecord));
-        prefs.end();
-
-        Serial.printf("Band #%d Saved Successfully.\n", idx);
-        
-        clearWebScanData(); // Wipe the temporary "capture" data after saving
-        return idx;
-    }
-
-    // Ensure these bridge functions are present for the linker
+    void web_cancel_scan() { clearWebScanData(); }
     bool web_has_scan_result() { return g_webScanHasResult; }
     bool web_scan_result_is_known() { return g_webScanIsKnown; }
     int  web_scan_known_index() { return g_webScanKnownIndex; }
     bool web_pending_new_band() { return g_webPendingNew; }
     void web_scan_uid_string(char *out, size_t outSize) { strncpy(out, g_webScanUidStr, outSize); }
     void web_scan_type_string(char *out, size_t outSize) { strncpy(out, g_webScanTypeStr, outSize); }
+
+    int web_confirm_save_pending_new(bool yes) {
+        if(!yes) { clearWebScanData(); return -1; }
+        if(bandCount >= 50) { clearWebScanData(); return -1; }
+        registeredBands[bandCount] = g_webPendingRecord;
+        int idx = bandCount; bandCount++;
+        prefs.begin("mbands", false);
+        prefs.putInt("count", bandCount);
+        prefs.putBytes(("b" + String(idx)).c_str(), &registeredBands[idx], sizeof(BandRecord));
+        prefs.end();
+        clearWebScanData(); 
+        return idx;
+    }
 }
 
-// --- IO Expander Setup ---
+// --- Audio Diagnostics Callbacks ---
+void audio_info(const char *info){ Serial.print("AUDIO_INFO: "); Serial.println(info); }
+void audio_eof_mp3(const char *info){ Serial.println("AUDIO: End of file reached"); }
+
 void initIOExpander() {
     Wire.beginTransmission(0x20); Wire.write(0x06); Wire.write(0x00); Wire.endTransmission(); 
-    Wire.beginTransmission(0x20); Wire.write(0x07); Wire.write(0x0F); Wire.endTransmission(); // Port 1 bits 0-3 Input
+    Wire.beginTransmission(0x20); Wire.write(0x07); Wire.write(0xFE); Wire.endTransmission(); 
     Wire.beginTransmission(0x20); Wire.write(0x02); Wire.write(0xFF); Wire.endTransmission(); 
     Wire.beginTransmission(0x20); Wire.write(0x03); Wire.write(0xFF); Wire.endTransmission(); 
+    Serial.println("Hardware: Speaker PA (EXIO8) Enabled.");
 }
 
-// --- Anti-Freeze Success Animation ---
 void handleSuccess(uint32_t color) {
     if(isSuccessActive) return;
     isSuccessActive = true;
     
+    Play_Music_test();
+
     strip.setBrightness(255); 
     for(int r=0; r<2; r++) {
         for(int f=0; f<LED_COUNT; f++) {
+            // CRITICAL: Prevent audio timeout during LED delays
+            audio.loop(); 
+
             strip.clear();
             for(int i=0; i<4; i++) {
                 int p=(f-i+LED_COUNT)%LED_COUNT;
@@ -163,25 +158,37 @@ void handleSuccess(uint32_t color) {
         }
     }
     
-    // Pulse breathing
     for(int p=0; p<2; p++) {
-        for(int b=60; b<=255; b+=15) { strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(20); }
-        for(int b=255; b>=60; b-=15) { strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(20); }
+        for(int b=60; b<=255; b+=15) { 
+            audio.loop(); // Keep audio pumping
+            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(20); 
+        }
+        for(int b=255; b>=60; b-=15) { 
+            audio.loop(); // Keep audio pumping
+            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(20); 
+        }
     }
 
     strip.clear(); strip.setBrightness(40); strip.show();
-    
-    // Safety delay to let I2C bus settle
     delay(200); 
     isSuccessActive = false;
 }
 
 void setup() {
     Serial.begin(115200);
+    delay(2000); // Give Serial Monitor time to connect
+    Serial.println("\n\n=== MAGIC BAND HUB BOOTING ===");
+
+    if(!LittleFS.begin(true)) Serial.println("LittleFS Mount Failed");
+
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setTimeOut(250); // High timeout for S3 bus stability
-    
+    Wire.setTimeOut(250); 
     initIOExpander();   
+    
+    // FIXED: Only call SD_Init once
+    SD_Init();
+    Audio_Init();
+
     strip.begin();
     strip.setBrightness(40);
     strip.fill(strip.Color(0, 0, 150)); strip.show();
@@ -192,7 +199,6 @@ void setup() {
     for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
     prefs.end();
     
-    LittleFS.begin(true);
     if(nfc.begin()) nfc.SAMConfig();
 
     initWebServer(); 
@@ -208,6 +214,9 @@ void setup() {
 }
 
 void loop() {
+    Audio_Loop();
+    audio.loop();
+
     if (WiFi.status() == WL_CONNECTED && !mdnsStarted) {
         if (MDNS.begin("magicband")) {
             MDNS.addService("http", "tcp", 80);
@@ -215,31 +224,26 @@ void loop() {
         }
     }
 
-    // --- NON-BLOCKING BUTTONS ---
+    // Priority 2: Button Polling (Middle Button triggers Audio Test)
     static uint32_t lastBtn = 0;
-    if (millis() - lastBtn > 80 && !isSuccessActive) {
+    if (millis() - lastBtn > 150) {
         lastBtn = millis();
-        Wire.beginTransmission(0x20); Wire.write(0x01);
+        
+        Wire.beginTransmission(0x20);
+        Wire.write(0x01); // Read Port 1
         if (Wire.endTransmission() == 0) {
             Wire.requestFrom(0x20, 1);
             if (Wire.available()) {
                 uint8_t input = Wire.read();
-                bool io9  = !(input & 0x02);
-                bool io10 = !(input & 0x04);
-                bool io11 = !(input & 0x08);
-
-                if (io9) { 
-                    strip.setBrightness(200); strip.fill(strip.Color(255, 0, 0)); strip.show(); 
-                    web_arm_scan(); 
-                } 
-                else if (io10) { strip.setBrightness(200); strip.fill(strip.Color(0, 255, 0)); strip.show(); } 
-                else if (io11) { strip.setBrightness(200); strip.fill(strip.Color(0, 0, 255)); strip.show(); } 
-                else if (!g_webScanArmed) { strip.clear(); strip.setBrightness(40); strip.show(); }
+                // Button 2 is bit 2 (IO10)
+                if (!(input & 0x04)) { 
+                    Serial.println("Button: Middle Pressed -> Beep Test");
+                    Play_Raw_Hardware_Test();
+                }
             }
         }
     }
 
-    // Animation while armed
     if (g_webScanArmed && !g_webScanHasResult && !isSuccessActive) {
         static uint32_t lastAnim = 0;
         if (millis() - lastAnim > 120) {
@@ -250,12 +254,10 @@ void loop() {
         }
     }
 
-    // --- NFC SCAN ---
     static uint32_t lastNFC = 0;
     if (millis() - lastNFC > 150 && !isSuccessActive) {
         lastNFC = millis();
         uint8_t uid[7], len;
-        // Check with short timeout so it doesn't freeze buttons
         if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &len, 40)) {
             formatUidString(uid, len, g_webScanUidStr, sizeof(g_webScanUidStr));
             computeBandTypeFromUidStr(g_webScanUidStr, g_webScanTypeStr, sizeof(g_webScanTypeStr));
