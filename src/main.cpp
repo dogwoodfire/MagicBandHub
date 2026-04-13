@@ -11,6 +11,7 @@
 #include <time.h>
 #include "esp_sntp.h"
 #include <HTTPClient.h>
+#include <Audio.h> 
 
 // Audio and SD Support
 #include "Audio_ES8311.h"
@@ -29,7 +30,7 @@ struct _lv_event_t;
 // --- Globals ---
 Adafruit_PN532 nfc(NFC_IRQ, NFC_RST, &Wire); 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
-Audio audio; 
+Audio audio(false, 3, I2S_NUM_1); 
 
 Preferences prefs;
 AsyncWebServer server(80); 
@@ -44,6 +45,166 @@ uint32_t sleepTimeout = 300000;
 bool isWiFiActive = false;
 bool isSuccessActive = false;
 bool mdnsStarted = false;
+bool g_successAnimationActive = false;
+uint32_t g_successAnimationColor = 0;
+uint32_t g_successAnimationStart = 0;
+uint32_t g_successAnimationLastFrame = 0;
+enum AnimationStyle : uint8_t {
+    ANIMATION_STYLE_SPOOKY = 0,
+    ANIMATION_STYLE_GREEN = 1,
+    ANIMATION_STYLE_DEFAULT_CHIME = 2,
+};
+AnimationStyle g_successAnimationStyle = ANIMATION_STYLE_SPOOKY;
+uint32_t g_successAnimationPhaseStart = 0;
+
+static void audioFriendlyDelay(uint32_t ms) {
+    const uint32_t start = millis();
+    while (millis() - start < ms) {
+        Audio_Loop();
+        delay(2);
+    }
+}
+
+static uint8_t scaleChan(uint8_t v, uint8_t level) {
+    return (uint8_t)(((uint16_t)v * (uint16_t)level) / 255U);
+}
+
+static void renderSolidGreen(uint8_t brightness) {
+    strip.setBrightness(brightness);
+    strip.fill(strip.Color(0, 255, 0));
+    strip.show();
+}
+
+static void renderDefaultChimeStep(uint8_t headIndex) {
+    strip.clear();
+    strip.setPixelColor(headIndex, strip.Color(0, 255, 0));
+    strip.setPixelColor((headIndex + LED_COUNT - 1) % LED_COUNT, strip.Color(0, 64, 0));
+    strip.setPixelColor((headIndex + 1) % LED_COUNT, strip.Color(0, 96, 0));
+    strip.show();
+}
+
+static void renderCometPulse(uint32_t baseColor, uint32_t elapsedMs) {
+    const uint32_t orange = strip.Color(255, 110, 0);
+    const uint32_t purple = strip.Color(120, 0, 180);
+    const uint32_t green  = strip.Color(0, 220, 70);
+    const uint32_t mint   = strip.Color(80, 255, 170);
+
+    const uint32_t primary = (g_successAnimationStyle == ANIMATION_STYLE_GREEN) ? green : orange;
+    const uint32_t accent  = (g_successAnimationStyle == ANIMATION_STYLE_GREEN) ? mint : purple;
+
+    // Fast rotation with a jaunty two-step bounce in brightness.
+    const uint8_t head = (elapsedMs / 90U) % LED_COUNT;
+    const uint8_t bounce = ((elapsedMs / 180U) % 2 == 0) ? 255 : 170;
+
+    strip.clear();
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        const uint8_t offset = (i + LED_COUNT - head) % LED_COUNT;
+        uint32_t color = 0;
+        uint8_t level = 0;
+
+        if (offset == 0) {
+            color = primary;
+            level = bounce;
+        } else if (offset == 1 || offset == LED_COUNT - 1) {
+            color = accent;
+            level = 180;
+        } else if (offset == 2 || offset == LED_COUNT - 2) {
+            color = primary;
+            level = 90;
+        } else if ((i + (elapsedMs / 220U)) % 3 == 0) {
+            color = accent;
+            level = 45;
+        } else {
+            color = primary;
+            level = 18;
+        }
+
+        const uint8_t r = (color >> 16) & 0xFF;
+        const uint8_t g = (color >> 8) & 0xFF;
+        const uint8_t b = color & 0xFF;
+        strip.setPixelColor(i, strip.Color(scaleChan(r, level), scaleChan(g, level), scaleChan(b, level)));
+    }
+    strip.show();
+}
+
+static void stopSuccessAnimation() {
+    g_successAnimationActive = false;
+    isSuccessActive = false;
+    strip.clear();
+    strip.setBrightness(40);
+    strip.show();
+}
+
+static void updateSuccessAnimation() {
+    if (!g_successAnimationActive) {
+        return;
+    }
+
+    const uint32_t now = millis();
+    if (g_successAnimationStyle == ANIMATION_STYLE_DEFAULT_CHIME) {
+        const uint32_t rotateElapsed = now - g_successAnimationStart;
+        const uint32_t stepMs = 120;
+        const uint8_t totalSteps = LED_COUNT * 2;
+        const uint32_t step = rotateElapsed / stepMs;
+
+        if (step < totalSteps) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                strip.setBrightness(255);
+                renderDefaultChimeStep(step % LED_COUNT);
+            }
+            return;
+        }
+
+        if (g_successAnimationPhaseStart == 0) {
+            g_successAnimationPhaseStart = now;
+            renderSolidGreen(255);
+            Play_Default_Band_Chime();
+            Serial.println("Default band chime sequence reached audio sync point.");
+        }
+
+        const uint32_t fadeElapsed = now - g_successAnimationPhaseStart;
+        if (fadeElapsed >= 1500) {
+            stopSuccessAnimation();
+            return;
+        }
+
+        if (now - g_successAnimationLastFrame >= 16) {
+            g_successAnimationLastFrame = now;
+            const uint8_t brightness = (uint8_t)(((1500 - fadeElapsed) * 255U) / 1500U);
+            renderSolidGreen(brightness);
+        }
+        return;
+    }
+
+    if (now - g_successAnimationLastFrame >= 16) {
+        g_successAnimationLastFrame = now;
+        strip.setBrightness(255);
+        renderCometPulse(g_successAnimationColor, now - g_successAnimationStart);
+    }
+
+    const uint32_t elapsed = now - g_successAnimationStart;
+    const bool minRuntimeMet = elapsed >= 250;
+    const bool audioEnded = !audio.isRunning();
+    const bool timedOut = elapsed >= 30000;
+    if ((audioEnded && minRuntimeMet) || timedOut) {
+        stopSuccessAnimation();
+    }
+}
+
+static void startScanAnimation(AnimationStyle style, uint32_t color) {
+    g_successAnimationStyle = style;
+    g_successAnimationColor = color;
+    g_successAnimationStart = millis();
+    g_successAnimationLastFrame = 0;
+    g_successAnimationPhaseStart = 0;
+    g_successAnimationActive = true;
+    isSuccessActive = true;
+}
+
+static void startDefaultBandChimeSequence() {
+    startScanAnimation(ANIMATION_STYLE_DEFAULT_CHIME, 0x00FF00);
+}
 
 // Web Scan Globals
 volatile bool g_webScanArmed = false;        
@@ -130,48 +291,52 @@ void audio_info(const char *info){ Serial.print("AUDIO_INFO: "); Serial.println(
 void audio_eof_mp3(const char *info){ Serial.println("AUDIO: End of file reached"); }
 
 void initIOExpander() {
-    Wire.beginTransmission(0x20); Wire.write(0x06); Wire.write(0x00); Wire.endTransmission(); 
-    Wire.beginTransmission(0x20); Wire.write(0x07); Wire.write(0xFE); Wire.endTransmission(); 
-    Wire.beginTransmission(0x20); Wire.write(0x02); Wire.write(0xFF); Wire.endTransmission(); 
-    Wire.beginTransmission(0x20); Wire.write(0x03); Wire.write(0xFF); Wire.endTransmission(); 
-    Serial.println("Hardware: Speaker PA (EXIO8) Enabled.");
+    Wire.beginTransmission(0x20);
+    Wire.write(0x06); Wire.write(0x00); // Port0 output
+    Wire.endTransmission();
+
+    Wire.beginTransmission(0x20);
+    Wire.write(0x07); Wire.write(0x00); // Port1 output
+    Wire.endTransmission();
+
+    Wire.beginTransmission(0x20);
+    Wire.write(0x02); Wire.write(0xFF); // Port0 outputs high
+    Wire.endTransmission();
+
+    Wire.beginTransmission(0x20);
+    Wire.write(0x03); Wire.write(0xFF); // Factory flow sets EXIO8 high when enabling PA
+    Wire.endTransmission();
+
+    Serial.println("IO Expander: Port1=0xFF (EXIO8 high)");
 }
 
-void handleSuccess(uint32_t color) {
+// void initIOExpander() {
+//     Wire.beginTransmission(0x20); Wire.write(0x06); Wire.write(0x00); Wire.endTransmission(); 
+//     Wire.beginTransmission(0x20); Wire.write(0x07); Wire.write(0xFE); Wire.endTransmission(); 
+//     Wire.beginTransmission(0x20); Wire.write(0x02); Wire.write(0xFF); Wire.endTransmission(); 
+//     Wire.beginTransmission(0x20); Wire.write(0x03); Wire.write(0xFF); Wire.endTransmission(); 
+//     Serial.println("Hardware: Speaker PA (EXIO8) Enabled.");
+// }
+
+void handleSuccess(uint32_t color, uint16_t themeId) {
     if(isSuccessActive) return;
-    isSuccessActive = true;
-    
-    Play_Music_test();
 
-    strip.setBrightness(255); 
-    for(int r=0; r<2; r++) {
-        for(int f=0; f<LED_COUNT; f++) {
-            // CRITICAL: Prevent audio timeout during LED delays
-            audio.loop(); 
-
-            strip.clear();
-            for(int i=0; i<4; i++) {
-                int p=(f-i+LED_COUNT)%LED_COUNT;
-                strip.setPixelColor(p, strip.Color(255-(i*60), 255-(i*60), 255-(i*60))); 
-            }
-            strip.show(); delay(35);
-        }
-    }
-    
-    for(int p=0; p<2; p++) {
-        for(int b=60; b<=255; b+=15) { 
-            audio.loop(); // Keep audio pumping
-            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(20); 
-        }
-        for(int b=255; b>=60; b-=15) { 
-            audio.loop(); // Keep audio pumping
-            strip.fill(strip.gamma32(color)); strip.setBrightness(b); strip.show(); delay(20); 
-        }
+    if (themeId == 7) {
+        Play_Music_theme(themeId);
+        startScanAnimation(ANIMATION_STYLE_SPOOKY, color);
+        Serial.println("Theme-specific success animation started; running until audio playback ends.");
+        return;
     }
 
-    strip.clear(); strip.setBrightness(40); strip.show();
-    delay(200); 
-    isSuccessActive = false;
+    startDefaultBandChimeSequence();
+    Serial.println("Default band chime sequence started.");
+}
+
+void handleUnknownBand() {
+    if (isSuccessActive) return;
+
+    startDefaultBandChimeSequence();
+    Serial.println("Unknown band default chime sequence started.");
 }
 
 void setup() {
@@ -187,6 +352,7 @@ void setup() {
     
     // FIXED: Only call SD_Init once
     SD_Init();
+    audio.setBufsize(4096, 65536);
     Audio_Init();
 
     strip.begin();
@@ -215,7 +381,8 @@ void setup() {
 
 void loop() {
     Audio_Loop();
-    audio.loop();
+    updateSuccessAnimation();
+    //audio.loop();
 
     if (WiFi.status() == WL_CONNECTED && !mdnsStarted) {
         if (MDNS.begin("magicband")) {
@@ -255,10 +422,21 @@ void loop() {
     }
 
     static uint32_t lastNFC = 0;
+    static uint32_t lastScanTime = 0;
+    static uint8_t lastScanUid[7] = {0};
+    static uint8_t lastScanLen = 0;
     if (millis() - lastNFC > 150 && !isSuccessActive) {
         lastNFC = millis();
         uint8_t uid[7], len;
         if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &len, 40)) {
+            bool sameAsLast = (len == lastScanLen) && (memcmp(uid, lastScanUid, len) == 0);
+            if (sameAsLast && (millis() - lastScanTime < 2000)) {
+                return;
+            }
+            memcpy(lastScanUid, uid, len);
+            lastScanLen = len;
+            lastScanTime = millis();
+
             formatUidString(uid, len, g_webScanUidStr, sizeof(g_webScanUidStr));
             computeBandTypeFromUidStr(g_webScanUidStr, g_webScanTypeStr, sizeof(g_webScanTypeStr));
             
@@ -276,10 +454,12 @@ void loop() {
                     g_webPendingRecord.color = 0x00FF00; g_webPendingNew = true;
                 }
             }
-            if (idx != -1) handleSuccess(registeredBands[idx].color); 
-            else { 
-                strip.setBrightness(200); strip.fill(strip.Color(150, 100, 0)); strip.show(); 
-                delay(300); strip.clear(); strip.setBrightness(40); strip.show(); 
+            if (idx != -1) {
+                Serial.printf("Known band idx=%d name=%s themeId=%u\n", idx, registeredBands[idx].name, (unsigned)registeredBands[idx].themeId);
+                handleSuccess(registeredBands[idx].color, registeredBands[idx].themeId);
+            }
+            else {
+                handleUnknownBand();
             }
         }
     }

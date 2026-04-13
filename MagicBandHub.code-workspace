@@ -4,5 +4,13 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"/Users/liamduffy/.platformio/penv/bin/platformio": true,
+			"/^cd '/Users/liamduffy/MagicBandHub' && python3 -m platformio run -e TEST-esp32-s3-audio-board$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		}
+	}
 }

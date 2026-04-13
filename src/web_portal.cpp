@@ -77,7 +77,8 @@ static const char* kThemeNames[] = {
     "Pulse Purple",
     "Rainbow",
     "Spooky",
-    "MNSSHP"
+    "MNSSHP",
+    "Boo To You"
 };
 static const int kThemeCount = (int)(sizeof(kThemeNames) / sizeof(kThemeNames[0]));
 
