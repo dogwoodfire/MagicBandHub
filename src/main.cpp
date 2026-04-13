@@ -382,13 +382,22 @@ static void updateSuccessAnimation() {
         if (g_customThemeLoop == CTL_GENTLE_PULSE) {
             if (now - g_successAnimationLastFrame >= 16) {
                 g_successAnimationLastFrame = now;
-                uint8_t ci = (g_customThemeColorCount > 1)
-                    ? (uint8_t)((loopElapsed / 4000) % g_customThemeColorCount) : 0;
-                const uint32_t cc = g_customThemeColors[ci];
+                // Cross-fade between colours over a 4 s cycle each
+                const uint32_t cyclePeriod = 4000;
+                const uint32_t cyclePos = loopElapsed % cyclePeriod;
+                const uint8_t ci0 = (g_customThemeColorCount > 1)
+                    ? (uint8_t)((loopElapsed / cyclePeriod) % g_customThemeColorCount) : 0;
+                const uint8_t ci1 = (ci0 + 1) % (g_customThemeColorCount > 0 ? g_customThemeColorCount : 1);
+                const float t = (float)cyclePos / (float)cyclePeriod;
+                const uint32_t c0 = g_customThemeColors[ci0];
+                const uint32_t c1 = (g_customThemeColorCount > 1) ? g_customThemeColors[ci1] : c0;
+                const uint8_t lr = (uint8_t)((1.0f - t) * ((c0 >> 16) & 0xFF) + t * ((c1 >> 16) & 0xFF));
+                const uint8_t lg = (uint8_t)((1.0f - t) * ((c0 >>  8) & 0xFF) + t * ((c1 >>  8) & 0xFF));
+                const uint8_t lb = (uint8_t)((1.0f - t) * ( c0        & 0xFF) + t * ( c1        & 0xFF));
                 const float angle = (float)(loopElapsed % 2000) / 2000.0f * 2.0f * 3.14159f;
                 uint8_t br = (uint8_t)(15.0f + 185.0f * (sinf(angle) * 0.5f + 0.5f));
                 strip.setBrightness(br);
-                strip.fill(cc);
+                strip.fill(strip.Color(lr, lg, lb));
                 strip.show();
             }
         } else {
@@ -412,7 +421,7 @@ static void updateSuccessAnimation() {
         }
 
         const bool audioEnded2 = !audio.isRunning();
-        if ((audioEnded2 && loopElapsed >= 250) || loopElapsed >= 30000) {
+        if (audioEnded2 && loopElapsed >= 250) {
             stopSuccessAnimation();
         }
         return;
@@ -561,7 +570,7 @@ void initIOExpander() {
     Wire.endTransmission();
 
     Wire.beginTransmission(0x20);
-    Wire.write(0x03); Wire.write(0xFF); // Factory flow sets EXIO8 high when enabling PA
+    Wire.write(0x03); Wire.write(0x00); // Port1 LOW — PA disabled until after audio/LED init
     Wire.endTransmission();
 
     Serial.println("IO Expander: Port1=0xFF (EXIO8 high)");
@@ -634,6 +643,9 @@ void setup() {
     strip.begin();
     strip.setBrightness(40);
     strip.fill(strip.Color(0, 0, 150)); strip.show();
+    delay(150); // let NeoPixel inrush settle before enabling speaker amp
+    // Enable PA: PCA9555 Port1 = 0xFF (EXIO8 high)
+    Wire.beginTransmission(0x20); Wire.write(0x03); Wire.write(0xFF); Wire.endTransmission();
 
     loadCategoriesFromPrefs();
     prefs.begin("mbands", false);
@@ -668,21 +680,38 @@ void loop() {
         }
     }
 
-    // Priority 2: Button Polling (Middle Button triggers Audio Test)
+    // Priority 2: Button Polling
+    // Key 1 (bit 1 / 0x02) = Volume Up
+    // Key 2 (bit 2 / 0x04) = Stop music
+    // Key 3 (bit 3 / 0x08) = Volume Down
     static uint32_t lastBtn = 0;
+    static uint8_t  lastBtnState = 0xFF;
     if (millis() - lastBtn > 150) {
         lastBtn = millis();
-        
+
         Wire.beginTransmission(0x20);
-        Wire.write(0x01); // Read Port 1
+        Wire.write(0x01);
         if (Wire.endTransmission() == 0) {
             Wire.requestFrom(0x20, 1);
             if (Wire.available()) {
                 uint8_t input = Wire.read();
-                // Button 2 is bit 2 (IO10)
-                if (!(input & 0x04)) { 
-                    Serial.println("Button: Middle Pressed -> Beep Test");
-                    Play_Raw_Hardware_Test();
+                uint8_t pressed = (~input) & ~lastBtnState; // newly-pressed edges only
+                lastBtnState = ~input;
+
+                if (pressed & 0x04) {
+                    Serial.println("Button 2: Stop music");
+                    Music_stop();
+                    stopSuccessAnimation();
+                }
+                if (pressed & 0x02) {
+                    uint8_t v = (g_volume < 21) ? g_volume + 1 : 21;
+                    Serial.printf("Button 1: Volume Up -> %u\n", v);
+                    Music_set_volume(v);
+                }
+                if (pressed & 0x08) {
+                    uint8_t v = (g_volume > 0) ? g_volume - 1 : 0;
+                    Serial.printf("Button 3: Volume Down -> %u\n", v);
+                    Music_set_volume(v);
                 }
             }
         }
@@ -729,6 +758,17 @@ void loop() {
                     strncpy(g_webPendingRecord.name, "New Band", 19);
                     strncpy(g_webPendingRecord.type, g_webScanTypeStr, 19);
                     g_webPendingRecord.color = 0x00FF00; g_webPendingNew = true;
+                }
+                // When armed via web, skip the full theme animation for known bands —
+                // just do a brief white flash so the user gets tactile feedback.
+                if(g_webScanIsKnown) {
+                    strip.fill(strip.Color(200, 200, 200));
+                    strip.setBrightness(180);
+                    strip.show();
+                    delay(200);
+                    strip.clear();
+                    strip.show();
+                    return;
                 }
             }
             if (idx != -1) {

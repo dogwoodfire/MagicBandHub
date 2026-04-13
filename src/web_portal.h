@@ -54,6 +54,7 @@ struct BandRecord {
     char originalPrice[16]; // $54.99
     char sku[80];           // 400..., 419...
     char mbcListing[64];    // e.g. "2526" or full URL
+    uint8_t checkedOut;     // 1 = packed/checked-out, 0 = at home
 };
 
 void initWebServer();

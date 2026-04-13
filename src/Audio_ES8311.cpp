@@ -6,6 +6,8 @@
 
 extern Audio audio;
 
+uint8_t g_volume = 14; // 0-21, persisted across tracks
+
 static i2s_port_t active_i2s_port = I2S_NUM_0;
 static bool resolveRootFileCaseInsensitive(const char* wantedPath, char* outPath, size_t outPathSize);
 
@@ -44,6 +46,32 @@ static uint8_t readES8311(uint8_t reg) {
     return 0xFF;
 }
 
+static void writeES8311(uint8_t reg, uint8_t val) {
+    Wire.beginTransmission((uint8_t)0x18);
+    Wire.write(reg);
+    Wire.write(val);
+    Wire.endTransmission();
+}
+
+void Audio_SetMute(bool mute) {
+    uint8_t cur = readES8311(0x31);
+    if (mute) cur |= 0x20; else cur &= ~0x20;
+    writeES8311(0x31, cur);
+}
+
+// Mute codec, start decode pipeline, wait for DMA to prime, then unmute.
+// This eliminates the intermittent crackle caused by stale DMA buffer output
+// during the I2S pipeline restart that connecttoFS triggers.
+bool Audio_ConnectToFS(fs::FS &fs, const char* path) {
+    Audio_SetMute(true);
+    bool ok = audio.connecttoFS(fs, path);
+    if (ok) {
+        delay(80); // ~2 DMA buffer fills at 44100 Hz — enough for the decoder to prime
+    }
+    Audio_SetMute(false);
+    return ok;
+}
+
 static void dumpES8311Regs() {
     Serial.println("ES8311 register dump:");
     for (uint8_t r = 0; r <= 0x40; ++r) {
@@ -60,7 +88,7 @@ void Audio_Init() {
     Wire.beginTransmission((uint8_t)0x20); Wire.write((uint8_t)0x06); Wire.write((uint8_t)0x00); Wire.endTransmission();
     Wire.beginTransmission((uint8_t)0x20); Wire.write((uint8_t)0x07); Wire.write((uint8_t)0x00); Wire.endTransmission();
     Wire.beginTransmission((uint8_t)0x20); Wire.write((uint8_t)0x02); Wire.write((uint8_t)0xFF); Wire.endTransmission();
-    Wire.beginTransmission((uint8_t)0x20); Wire.write((uint8_t)0x03); Wire.write((uint8_t)0xFF); Wire.endTransmission();
+    Wire.beginTransmission((uint8_t)0x20); Wire.write((uint8_t)0x03); Wire.write((uint8_t)0x00); Wire.endTransmission(); // PA stays off — enabled after LEDs settle
     Serial.printf("PCA9555 init: port0=0x%02X port1=0x%02X\n", readPCA9555(0x02), readPCA9555(0x03));
 
     // Try to unmount SDMMC to free pins (if mounted)
@@ -103,7 +131,7 @@ void Audio_Init() {
     } else {
         Serial.println("audio.setPinout succeeded");
     }
-    audio.setVolume(14);
+    audio.setVolume(g_volume);
 
     active_i2s_port = (i2s_port_t)lib_i2s_port;
 
@@ -143,8 +171,8 @@ void Audio_Init() {
     wr(0x17, 0xC8);
     wr(0x1C, 0x6A);
 
-    // Unmute DAC and set a clearly audible codec volume.
-    wr(0x31, 0x00);
+    // Keep DAC muted during power-up to avoid startup pop; will unmute after silence flush.
+    wr(0x31, 0x20); // bit5 = DAC_MUTE
     wr(0x32, 0xB8);
     wr(0x37, 0x08);
 
@@ -167,7 +195,22 @@ void Audio_Init() {
 
     // Tell the Audio library about the pinout and volume
     audio.setPinout(BSP_I2S_SCLK, BSP_I2S_LCLK, BSP_I2S_DOUT, BSP_I2S_DIN, BSP_I2S_MCLK);
-    audio.setVolume(14);
+    audio.setVolume(g_volume);
+
+    // Flush silence into the I2S DMA buffers before unmuting the DAC.
+    // This ensures the amp sees a clean zero signal the moment audio is enabled.
+    {
+        int16_t silence[64] = {};
+        size_t bw;
+        for (int k = 0; k < 64; k++) {
+            i2s_write(active_i2s_port, silence, sizeof(silence), &bw, pdMS_TO_TICKS(10));
+        }
+    }
+    delay(20);
+
+    // Now unmute the DAC — DMA is filled with silence so no pop.
+    wr(0x31, 0x00);
+    delay(10);
 
     Serial.println("Audio_Init complete.");
 }
@@ -210,8 +253,8 @@ void Play_Music_test() {
 
     Serial.printf("Audio test file: %s\n", path);
     Serial.println("Attempting to play...");
-    audio.setVolume(14);
-    bool ok = audio.connecttoFS(SD_MMC, path);
+    audio.setVolume(g_volume);
+    bool ok = Audio_ConnectToFS(SD_MMC, path);
     if (!ok) {
         Serial.println("Audio connecttoFS failed.");
     } else {
@@ -248,8 +291,8 @@ bool Play_Music_file(const char* path) {
             continue;
         }
         Serial.printf("Playing audio file: %s\n", candidate);
-        audio.setVolume(14);
-        bool ok = audio.connecttoFS(SD_MMC, candidate);
+        audio.setVolume(g_volume);
+        bool ok = Audio_ConnectToFS(SD_MMC, candidate);
         if (!ok) {
             Serial.println("Audio connecttoFS failed.");
             continue;
@@ -307,8 +350,8 @@ bool Play_Fallback_Chime() {
     for (const char* c : candidates) {
         if (LittleFS.exists(c)) {
             Serial.printf("LittleFS fallback chime: %s\n", c);
-            audio.setVolume(14);
-            return audio.connecttoFS(LittleFS, c);
+            audio.setVolume(g_volume);
+            return Audio_ConnectToFS(LittleFS, c);
         }
     }
     Serial.println("No fallback chime found in LittleFS.");
@@ -363,6 +406,17 @@ bool Play_Music_theme(uint16_t themeId) {
 
     Serial.println("Theme file missing or no SD — using LittleFS fallback chime.");
     return Play_Fallback_Chime();
+}
+
+void Music_stop() {
+    audio.stopSong();
+}
+
+void Music_set_volume(uint8_t vol) {
+    if (vol > 21) vol = 21;
+    g_volume = vol;
+    audio.setVolume(g_volume);
+    Serial.printf("Volume set to %u\n", g_volume);
 }
 
 void Audio_Loop() {

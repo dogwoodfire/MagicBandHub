@@ -684,59 +684,126 @@ static String buildFullThemeSelectOptions(uint16_t currentId) {
 void initWebServer() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
-        html += "<style>body{font-family:sans-serif; text-align:center; background:#3677A3; padding:20px;} ";
-        html += "h1{color:#fff; font-weight:800; margin:10px 0 18px 0;} ";
-        html += ".card{background:white; border-radius:15px; padding:15px; margin:10px auto; max-width:350px; box-shadow: 2px 2px 10px rgba(11, 18, 108, 0.6);} ";
-        html += ".summary{display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;} ";
-        html += ".summary-left{display:flex; align-items:center; gap:10px; text-align:left;} ";
-        html += ".thumb{width:110px; height:180px; object-fit:contain; object-position:top center; border-radius:10px; background:#fff; box-sizing:border-box; padding:10px; display:block;} ";
-        html += ".thumb{border:1px solid #e6e6e6;} ";
-        html += ".settings-header{cursor:pointer; font-weight:bold; padding:10px;} .settings-body{display:none; text-align:left;} ";
-        html += ".meta{color:#666; font-size:0.8em;} ";
-        html += ".status{margin-top:10px; padding:10px 12px; border-radius:10px; font-weight:800; background:#fff3cd; color:#856404; border:1px solid #ffeeba;} ";
-        html += ".details{margin-top:12px; text-align:left;} ";
-        html += "input, select{margin:0; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box; max-width:100%; font-size:16px;} ";
-        html += ".btn-search{background:#5765f2; color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; width:80%; margin-bottom:10px;} ";
-        html += ".btn-save{background:#2ed573; color:white; border:none; padding:12px; width:80%; border-radius:8px; cursor:pointer; font-size:16px;} ";
-        html += ".btn-save{box-sizing:border-box;} ";
-        html += ".btn-del{background:#ff4757; color:white; border:none; padding:5px 10px; border-radius:5px; font-size:0.8em; display:inline-block; text-decoration:none;} ";
-        html += ".btn-del:active{opacity:0.9;} ";
-        html += ".details{margin-top:12px; text-align:left;} ";
-        html += ".section{margin-top:18px; padding-top:12px; border-top:1px solid #eee;} ";
-        html += ".section-title{font-size:0.85em; font-weight:600; color:#666; margin-bottom:10px;} ";
-        html += ".field{margin-bottom:12px;} ";
-        html += ".field label{display:block; font-size:0.8em; color:#555; margin-bottom:4px;} ";
-        html += ".field input, .field select{width:100%; max-width:100%; display:block;} ";
-        html += "input[type=date]{width:170px;} ";
-        html += ".btn-secondary{background:#eef1ff; color:#3b4ce2; border:none; padding:10px 12px; width:100%; border-radius:8px; cursor:pointer; margin-top:6px; font-size:16px; box-sizing:border-box; display:block;} ";
-        html += ".scan-btn{width:auto; padding:10px 14px; margin:0; font-size:16px;} ";
-        html += ".scan-cancel{background:#ff4757; color:#fff; border:none; border-radius:8px; cursor:pointer;} ";
+        html += "<style>";
+        html += "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:center;background:linear-gradient(160deg,#1a237e 0%,#1565c0 60%,#0288d1 100%);min-height:100vh;padding:20px;margin:0;}";
+        html += "h1{color:#fff;font-weight:900;margin:10px 0 4px 0;letter-spacing:-0.5px;text-shadow:0 2px 8px rgba(0,0,0,0.25);}";
+        html += ".card{background:#fff;border-radius:18px;padding:18px;margin:12px auto;max-width:100%;box-shadow:0 4px 20px rgba(10,30,90,0.18);}";
+        html += ".container{max-width:820px;margin:0 auto;}";
+        html += "@media(min-width:700px){body{padding:30px 40px;} h1{font-size:2.4em;} .card{padding:24px;}}";
+        html += ".summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;}";
+        html += ".summary-left{display:flex;align-items:center;gap:12px;text-align:left;}";
+        html += ".thumb{width:110px;height:180px;object-fit:contain;object-position:top center;border-radius:12px;background:#f4f6ff;box-sizing:border-box;padding:10px;display:block;border:1px solid #e0e4ff;}";
+        html += ".settings-header{cursor:pointer;font-weight:700;padding:10px;color:#1a237e;font-size:0.95em;} .settings-body{display:none;text-align:left;}";
+        html += ".meta{color:#888;font-size:0.82em;line-height:1.4;}";
+        html += ".status{margin-top:10px;padding:10px 14px;border-radius:10px;font-weight:700;background:#fff8e1;color:#e65100;border:1px solid #ffe0b2;}";
+        html += ".details{margin-top:14px;text-align:left;}";
+        html += "input,select{margin:0;padding:9px 10px;border-radius:8px;border:1.5px solid #dde;box-sizing:border-box;max-width:100%;font-size:15px;transition:border-color 0.2s;}";
+        html += "input:focus,select:focus{outline:none;border-color:#5765f2;}";
+        html += ".btn-save{background:linear-gradient(135deg,#00b894,#00cec9);color:white;border:none;padding:12px;width:80%;border-radius:10px;cursor:pointer;font-size:16px;box-sizing:border-box;font-weight:700;}";
+        html += ".btn-del{background:#ff4757;color:white;border:none;padding:5px 12px;border-radius:8px;font-size:0.82em;display:inline-block;text-decoration:none;cursor:pointer;}";
+        html += ".btn-del:active{opacity:0.85;}";
+        html += ".section{margin-top:20px;padding-top:14px;border-top:1px solid #f0f4ff;}";
+        html += ".section-title{font-size:0.75em;font-weight:800;color:#5765f2;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.08em;}";
+        html += ".field{margin-bottom:14px;}";
+        html += ".field label{display:block;font-size:0.8em;color:#555;margin-bottom:5px;font-weight:600;}";
+        html += ".field input,.field select{width:100%;max-width:100%;display:block;}";
+        html += "input[type=date]{width:170px;}";
+        html += ".btn-secondary{background:#f0f2ff;color:#3b4ce2;border:1.5px solid #c5caf5;padding:10px 12px;width:100%;border-radius:10px;cursor:pointer;margin-top:6px;font-size:15px;box-sizing:border-box;display:block;font-weight:600;transition:background 0.15s;}";
+        html += ".btn-secondary:hover{background:#e0e4ff;}";
+        html += ".scan-btn{width:auto;padding:10px 18px;margin:0;font-size:15px;font-weight:600;}";
+        html += ".scan-cancel{background:#ff4757;color:#fff;border:none;border-radius:10px;cursor:pointer;}";
+        html += ".view-toggle{display:flex;gap:8px;justify-content:flex-end;margin-bottom:6px;}";
+        html += ".view-toggle button{background:#fff;border:2px solid #e0e4ff;color:#5765f2;border-radius:10px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:700;transition:all 0.15s;}";
+        html += ".view-toggle button.active,.view-toggle button:hover{background:#5765f2;color:#fff;border-color:#5765f2;}";
+        html += "#tileView{display:none;}";
+        html += ".tile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;padding:4px 0;}";
+        html += ".tile{background:#f8f9ff;border-radius:14px;padding:12px;cursor:pointer;box-shadow:0 2px 8px rgba(30,50,150,0.08);transition:transform 0.12s,box-shadow 0.12s;text-align:center;border:2px solid #eef0ff;}";
+        html += ".tile:hover{transform:translateY(-3px);box-shadow:0 6px 18px rgba(30,50,150,0.16);border-color:#5765f2;}";
+        html += ".tile img{width:100%;max-height:150px;object-fit:contain;border-radius:10px;background:#fff;padding:6px;box-sizing:border-box;border:1px solid #eee;}";
+        html += ".tile .tile-placeholder{width:100%;height:120px;background:#e8ebff;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#a0a8e0;font-size:2.2em;}";
+        html += ".tile-name{font-weight:800;font-size:0.84em;margin-top:8px;color:#1a237e;word-break:break-word;line-height:1.3;}";
+        html += ".tile-meta{font-size:0.72em;color:#999;margin-top:3px;}";
+        html += ".modal-overlay{display:none;position:fixed;inset:0;background:rgba(10,20,60,0.6);z-index:100;align-items:center;justify-content:center;}";
+        html += ".modal-overlay.open{display:flex;}";
+        html += ".modal{background:#fff;border-radius:20px;padding:24px;max-width:460px;width:92%;max-height:88vh;overflow-y:auto;position:relative;text-align:left;box-shadow:0 8px 40px rgba(10,30,100,0.25);}";
+        html += ".modal-img{width:150px;display:block;margin:0 auto 16px;border-radius:12px;background:#f4f6ff;padding:8px;box-sizing:border-box;border:1px solid #e0e4ff;}";
+        html += ".modal-close{position:absolute;top:14px;right:16px;background:#f0f2ff;border:none;width:32px;height:32px;border-radius:50%;font-size:1em;cursor:pointer;color:#3b4ce2;}";
+        html += ".modal h2{color:#1a237e;margin:0 0 14px;}";
+        html += ".meta-row{display:flex;gap:8px;margin-bottom:7px;font-size:0.88em;align-items:baseline;}";
+        html += ".meta-row b{min-width:120px;color:#5765f2;font-size:0.82em;text-transform:uppercase;letter-spacing:0.04em;}";
         html += "</style>";
         
         // SEARCH FILTER SCRIPT
         html += "<script>function filterBands() { var val = document.getElementById('search').value.toLowerCase();";
+        html += "var owner = document.getElementById('fOwner').value;";
+        html += "var loc   = document.getElementById('fLoc').value;";
         html += "var cards = document.getElementsByClassName('band-card');";
         html += "for (var i=0; i<cards.length; i++) { var txt = cards[i].innerText.toLowerCase();";
-        html += "cards[i].style.display = txt.includes(val) ? '' : 'none'; }}";
+        html += "var od = cards[i].getAttribute('data-owner')||'';";
+        html += "var ld = cards[i].getAttribute('data-loc')||'';";
+        html += "var okTxt   = !val   || txt.includes(val);";
+        html += "var okOwner = !owner || od === owner;";
+        html += "var okLoc   = !loc   || ld === loc;";
+        html += "var show = okTxt && okOwner && okLoc;";
+        html += "cards[i].style.display = show ? 'block' : 'none';";
+        // also hide corresponding tile
+        html += "var tile=document.getElementById('tile'+cards[i].getAttribute('data-idx'));";
+        html += "if(tile) tile.style.display = show ? 'block' : 'none'; }}";
+        html += "function setView(v){";
+        html += "  document.getElementById('listView').style.display = v==='list' ? 'block' : 'none';";
+        html += "  document.getElementById('tileView').style.display = v==='tile' ? 'block' : 'none';";
+        html += "  document.getElementById('btnList').classList.toggle('active', v==='list');";
+        html += "  document.getElementById('btnTile').classList.toggle('active', v==='tile');";
+        html += "  try{localStorage.setItem('mbhub_view',v);}catch(e){}";
+        html += "}";
+        html += "function openMeta(idx){";
+        html += "  var data=window.__bandData&&window.__bandData[idx];";
+        html += "  if(!data) return;";
+        html += "  var m=document.getElementById('metaModal');";
+        html += "  document.getElementById('metaImg').src=data.img||'';";
+        html += "  document.getElementById('metaImg').style.display=data.img?'block':'none';";
+        html += "  document.getElementById('metaName').textContent=data.name||'(no name)';";
+        html += "  document.getElementById('metaOwner').textContent=data.owner||'None';";
+        html += "  document.getElementById('metaLoc').textContent=data.loc||'None';";
+        html += "  document.getElementById('metaType').textContent=data.type||'';";
+        html += "  document.getElementById('metaRelease').textContent=data.rtype||'';";
+        html += "  document.getElementById('metaRdate').textContent=data.rdate||'';";
+        html += "  document.getElementById('metaBcol').textContent=data.bcol||'';";
+        html += "  document.getElementById('metaIcol').textContent=data.icol||'';";
+        html += "  document.getElementById('metaPrice').textContent=data.price||'';";
+        html += "  document.getElementById('metaSku').textContent=data.sku||'';";
+        html += "  document.getElementById('metaEditBtn').onclick=function(){";
+        html += "    document.getElementById('listView').style.display='block';";
+        html += "    closeMeta();";
+        html += "    toggleDetails(idx);";
+        html += "    var el=document.getElementById('d'+idx);";
+        html += "    if(el) setTimeout(function(){el.scrollIntoView({behavior:'smooth',block:'start'});},80);";
+        html += "    setView('list');";
+        html += "  };";
+        html += "  m.classList.add('open');";
+        html += "}";
+        html += "function closeMeta(){document.getElementById('metaModal').classList.remove('open');}";
         html += "function toggleDetails(id){ var el=document.getElementById('d'+id); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
         // Auto-open band card from ?open= param on load
-        html += "window.addEventListener('load', function(){ startScanPoll(); try{ var p=new URLSearchParams(window.location.search); var open=p.get('open'); if(open!==null){ var id=parseInt(open,10); if(!isNaN(id)){ toggleDetails(id); var el=document.getElementById('d'+id); if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); } } } }catch(e){} });";
+        html += "window.addEventListener('load', function(){ try{ var sv=localStorage.getItem('mbhub_view'); if(sv==='tile') setView('tile'); } catch(e){} try{ var p=new URLSearchParams(window.location.search); var open=p.get('open'); if(open!==null){ var id=parseInt(open,10); if(!isNaN(id)){ setView('list'); toggleDetails(id); var el=document.getElementById('d'+id); if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); } } } }catch(e){} });";
         html += "function toggleSettings(){ var el=document.getElementById('settings'); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
+
                 // Screen-less scan/register helpers
         html += "let __scanPoll=null;";
-        html += "function lookupMbc(id){ try{ var inp=document.getElementById('mbc'+id); var st=document.getElementById('mbcStatus'+id); if(!inp) return; var mbc=encodeURIComponent(inp.value||''); if(st){ st.style.display='block'; st.innerText='Fetching listing details...'; } fetch('/lookup?ajax=1&id='+id+'&mbc='+mbc).then(r=>r.json()).then(d=>{ if(!d||!d.status){ if(st) st.innerText='Fetch failed.'; return; } if(d.status==='busy'){ if(st) st.innerText='Another fetch is already running. Please wait.'; return; } if(d.status==='fail'){ if(st) st.innerText='Fetch failed. Check Wi-Fi and the listing.'; return; } if(st) st.innerText='Fetching from MagicBandCollectors.com...'; setTimeout(function(){ window.location='/?open='+id; }, 5000); }).catch(()=>{ if(st) st.innerText='Fetch failed.'; }); }catch(e){} }";
+        html += "function lookupMbc(id){ try{ var inp=document.getElementById('mbc'+id); var st=document.getElementById('mbcStatus'+id); if(!inp) return; var mbc=encodeURIComponent(inp.value||''); if(st){ st.style.display='block'; st.innerText='Fetching listing details\u2026'; } fetch('/lookup?ajax=1&id='+id+'&mbc='+mbc).then(r=>r.json()).then(d=>{ if(!d||!d.status){ if(st) st.innerText='Fetch failed.'; return; } if(d.status==='busy'){ if(st) st.innerText='Another fetch is already running. Please wait.'; return; } if(d.status==='fail'){ if(st) st.innerText='Fetch failed. Check Wi-Fi and the listing.'; return; } if(st) st.innerText='Fetching from MagicBandCollectors.com\u2026'; var __mbcPoll=setInterval(function(){ fetch('/lookup_poll').then(function(r){ return r.json(); }).then(function(p){ if(!p||!p.done) return; clearInterval(__mbcPoll); if(p.result===1){ if(st) st.innerText='Done! Loading\u2026'; window.location='/?open='+id; } else { if(st) st.innerText='Fetch failed. Check Wi-Fi and the listing.'; } }).catch(function(){}); },1000); }).catch(()=>{ if(st) st.innerText='Fetch failed.'; }); }catch(e){} }";
         html += "function armScan(){ fetch('/scan_arm?ajax=1').then(()=>{ var c=document.getElementById('btnScanCancel'); if(c) c.style.display='inline-block'; showScanFetching(); startScanPoll(); }).catch(()=>{}); }";
-        html += "function cancelScan(){ fetch('/scan_cancel?ajax=1').then(()=>{ stopScanPoll(); var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(body) body.style.display='none'; if(hint) hint.innerText='Scan cancelled.'; }).catch(()=>{}); }";
+        html += "function cancelScan(){ fetch('/scan_cancel?ajax=1').then(()=>{ stopScanPoll(); var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(body){ body.style.display='none'; body.innerHTML=''; } if(hint) hint.innerHTML='Scan cancelled. Tap <b>Start Scan</b> to try again.'; }).catch(()=>{}); }";
         html += "function showScanFetching(){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Tap a band to the reader...'; body.innerHTML='<div style=\"padding:10px;border:1px dashed #ccc;border-radius:10px;\">Waiting for a band... <div style=\"margin-top:8px;font-weight:700;\">(Scanning active)</div></div>'; }";
         html += "function startScanPoll(){ if(__scanPoll) return; __scanPoll=setInterval(pollScan, 700); pollScan(); }";
         html += "function stopScanPoll(){ if(__scanPoll){ clearInterval(__scanPoll); __scanPoll=null; } }";
         html += "function showScanArmed(){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Tap a band to the reader...'; body.innerHTML='<div style=\"padding:10px;border:1px dashed #ccc;border-radius:10px;\">Waiting for a band...</div>'; }";
-        html += "function showScanKnown(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Known band detected'; var img=''; if(d.img){ img='<img src=\"'+d.img+'\" style=\"width:160px;border-radius:10px;display:block;margin:10px auto;background:#fff;padding:10px;box-sizing:border-box;border:1px solid #e6e6e6;\">'; } body.innerHTML= img + '<div style=\"font-weight:800;\">'+(d.name||'Known band')+'</div><div class=\"meta\">'+(d.type||'')+'</div><button class=\"btn-secondary\" style=\"margin-top:10px;\" onclick=\"openBand('+d.knownIndex+');return false;\">Open / Edit</button>'; stopScanPoll(); }";
+        html += "function showScanKnown(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Known band detected'; var img=''; if(d.img){ img='<img src=\"'+d.img+'\" style=\"width:140px;border-radius:10px;display:block;margin:10px auto;background:#fff;padding:8px;box-sizing:border-box;border:1px solid #e0e4ff;\">'; } var co=d.checkedOut?1:0; var checkBtn=co?'<button class=\"btn-secondary\" style=\"margin:4px 0;\" onclick=\"doCheckInOut('+d.knownIndex+',0);return false;\">&#10003; Check In (mark as home)</button>':'<button class=\"btn-secondary\" style=\"margin:4px 0;background:#fff8e1;color:#e65100;border-color:#ffe0b2;\" onclick=\"doCheckInOut('+d.knownIndex+',1);return false;\">&#x1f9f3; Check Out (pack for trip)</button>'; body.innerHTML= img + '<div style=\"font-weight:800;color:#1a237e;\">'+(d.name||'Known band')+'</div><div class=\"meta\">'+(d.type||'')+'</div>'+checkBtn+'<button class=\"btn-secondary\" style=\"margin-top:6px;\" onclick=\"openBand('+d.knownIndex+');return false;\">&#9998; Open / Edit</button>'; stopScanPoll(); }";
+        html += "function doCheckInOut(idx,out){ fetch('/checkinout?id='+idx+'&out='+out,{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json();}).then(function(d){ if(d&&d.ok) window.location='/'; else alert('Failed'); }).catch(function(){alert('Error');}); }";
         html += "function showScanNew(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; body.style.display='block'; hint.innerText='New band detected'; body.innerHTML='<div style=\"font-weight:800;\">New band</div><div class=\"meta\">'+(d.uid||'')+' &nbsp;'+(d.type||'')+'</div><div style=\"display:flex;gap:10px;margin-top:10px;\"><button class=\"btn-save\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(1);return false;\">Yes, save</button><button class=\"btn-del\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(0);return false;\">No</button></div>'; }";
         html += "function confirmSave(yes){ fetch('/scan_confirm?yes='+yes+'&ajax=1').then(r=>r.json()).then(d=>{ var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; if(d && d.saved && d.openId>=0){ window.location='/?msg=scan_saved&open='+d.openId; } else { window.location='/?msg=scan_cancel'; } }).catch(()=>{ window.location='/?msg=scan_cancel'; }); }";
         html += "function openBand(id){ window.location='/?open='+id; }";
         html += "function pollScan(){ fetch('/scan_status').then(r=>r.json()).then(d=>{ if(!d||!d.state) return; if(d.state==='known'){ showScanKnown(d); } else if(d.state==='new'){ showScanNew(d); } else if(d.state==='armed'){ showScanArmed(); } }).catch(()=>{}); }";
-        html += "</script></head><body>";
+        html += "</script></head><body><div class='container'>";
 
         if(request->hasParam("msg")) {
             String msg = request->getParam("msg")->value();
@@ -790,24 +857,148 @@ void initWebServer() {
 
             // SCREEN-LESS REGISTER / SCAN CARD
             html += "<div class='card' id='scanCard' style='text-align:left;'>";
-            html += "<div style='display:flex; align-items:center; justify-content:space-between; gap:10px;'>";
-            html += "<div style='font-weight:800; color:#1f2d3d;'>Register Band</div>";
-            html += "<div style='display:flex; gap:8px;'>";
-            html += "<button id='btnScanStart' class='btn-secondary scan-btn' onclick='armScan(); return false;'>Start</button>";
+            html += "<div style='display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;'>";
+            html += "<div>";
+            html += "<div style='font-weight:800;color:#1a237e;font-size:1em;'>Scan a Band</div>";
+            html += "<div class='meta' style='margin-top:2px;'>See a band&#39;s info, check it in or out, or register a new band.</div>";
+            html += "</div>";
+            html += "<div style='display:flex;gap:8px;'>";
+            html += "<button id='btnScanStart' class='btn-secondary scan-btn' onclick='armScan(); return false;'>Start Scan</button>";
             html += "<button id='btnScanCancel' class='scan-btn scan-cancel' style='display:none;' onclick='cancelScan(); return false;'>Cancel</button>";
             html += "</div>";
             html += "</div>";
-            html += "<div class='meta' id='scanHint' style='margin-top:6px;'>Start a scan from the browser (screen-less mode). LEDs will swirl until a band is detected.</div>";
-            html += "<div id='scanBody' style='margin-top:10px; display:none;'></div>";
+            html += "<div id='scanBody' style='margin-top:10px;'></div>";
+            html += "<div class='meta' id='scanHint' style='margin-top:8px;display:none;'>Hold your MagicBand to the reader. The LEDs will swirl while scanning is active.</div>";
             html += "</div>";
             
-            // SEARCH BOX
-            html += "<input type='text' id='search' onkeyup='filterBands()' placeholder='Filter by Owner, Location, or Name...' style='width:90%; padding:15px; margin-bottom:20px;'>";
+            // FILTER BAR
+            html += "<div class='card' style='text-align:left;'>";
+            html += "<div style='display:flex; flex-wrap:wrap; gap:10px; align-items:center;'>";
+            html += "<input type='text' id='search' oninput='filterBands()' placeholder='Search by name, type\u2026' style='flex:1; min-width:140px;'>";
+            html += "<select id='fOwner' onchange='filterBands()' style='flex:1; min-width:120px;'><option value=''>All owners</option>";
+            for(int i=0; i<10; i++) {
+                if(ownersList[i][0] != '\0') {
+                    String opt = htmlEscape(String(ownersList[i]));
+                    html += "<option value='" + opt + "'>" + opt + "</option>";
+                }
+            }
+            html += "</select>";
+            html += "<select id='fLoc' onchange='filterBands()' style='flex:1; min-width:120px;'><option value=''>All locations</option>";
+            for(int i=0; i<10; i++) {
+                if(locationsList[i][0] != '\0') {
+                    String opt = htmlEscape(String(locationsList[i]));
+                    html += "<option value='" + opt + "'>" + opt + "</option>";
+                }
+            }
+            html += "</select>";
+            html += "</div></div>";
+
+            // VIEW TOGGLE
+            html += "<div class='view-toggle'>";
+            html += "<button id='btnList' class='active' onclick='setView(\"list\")'>&#9776; List</button>";
+            html += "<button id='btnTile' onclick='setView(\"tile\")'>&#9632;&#9632; Tiles</button>";
+            html += "</div>";
+
+            // BAND JS DATA (for metadata modal)
+            html += "<script>window.__bandData=[";
+            for(int i=0; i < bandCount; i++) {
+                auto &b = registeredBands[i];
+                String jImg   = jsonEscape(String(b.imageUrl));
+                String jName  = jsonEscape(String(b.name));
+                String jOwner = jsonEscape(strlen(b.owner)>0 ? String(b.owner) : "None");
+                String jLoc   = jsonEscape(strlen(b.location)>0 ? String(b.location) : "None");
+                String jType  = jsonEscape(String(b.type));
+                String jRtype = jsonEscape(String(b.releaseType));
+                String jRdate = jsonEscape(String(b.releaseDate));
+                String jBcol  = jsonEscape(String(b.bandColorName));
+                String jIcol  = jsonEscape(String(b.iconColorName));
+                String jPrice = jsonEscape(String(b.originalPrice));
+                String jSku   = jsonEscape(String(b.sku));
+                html += "{\"img\":\"" + jImg + "\",\"name\":\"" + jName + "\",\"owner\":\"" + jOwner + "\",\"loc\":\"" + jLoc + "\",\"type\":\"" + jType + "\",\"rtype\":\"" + jRtype + "\",\"rdate\":\"" + jRdate + "\",\"bcol\":\"" + jBcol + "\",\"icol\":\"" + jIcol + "\",\"price\":\"" + jPrice + "\",\"sku\":\"" + jSku + "\",\"checkedOut\":" + String((int)b.checkedOut) + "}";
+                if(i < bandCount - 1) html += ",";
+            }
+            html += "];</script>";
+
+            // TILE VIEW
+            html += "<div id='tileView' style='display:none;'>";
+            html += "<div class='card'><div class='tile-grid'>";
+            for(int i=0; i < bandCount; i++) {
+                auto &b = registeredBands[i];
+                if(b.checkedOut) continue; // shown in Packed section
+                String escImg  = htmlEscape(String(b.imageUrl));
+                String escName = htmlEscape(String(b.name));
+                String escOwner = htmlEscape(strlen(b.owner)>0 ? String(b.owner) : "None");
+                String escLoc   = htmlEscape(strlen(b.location)>0 ? String(b.location) : "None");
+                html += "<div id='tile" + String(i) + "' class='tile' onclick='openMeta(" + String(i) + ")' data-owner='" + escOwner + "' data-loc='" + escLoc + "'>";
+                if(strlen(b.imageUrl) > 5) {
+                    html += "<img src='" + escImg + "' alt=''>";
+                } else {
+                    html += "<div class='tile-placeholder'>&#127925;</div>";
+                }
+                html += "<div class='tile-name'>" + escName + "</div>";
+                html += "<div class='tile-meta'>" + escOwner + "</div>";
+                html += "</div>";
+            }
+            html += "</div></div></div>";
+
+            // METADATA MODAL
+            html += "<div class='modal-overlay' id='metaModal' onclick='if(event.target===this)closeMeta()'>";
+            html += "<div class='modal'>";
+            html += "<button class='modal-close' onclick='closeMeta()'>&#10005;</button>";
+            html += "<img id='metaImg' class='modal-img' src='' alt=''>";
+            html += "<h2 id='metaName' style='margin:0 0 12px;font-size:1.2em;'></h2>";
+            html += "<div class='meta-row'><b>Owner</b><span id='metaOwner'></span></div>";
+            html += "<div class='meta-row'><b>Location</b><span id='metaLoc'></span></div>";
+            html += "<div class='meta-row'><b>Type</b><span id='metaType'></span></div>";
+            html += "<div class='meta-row'><b>Release</b><span id='metaRelease'></span></div>";
+            html += "<div class='meta-row'><b>Release date</b><span id='metaRdate'></span></div>";
+            html += "<div class='meta-row'><b>Band colour</b><span id='metaBcol'></span></div>";
+            html += "<div class='meta-row'><b>Icon colour</b><span id='metaIcol'></span></div>";
+            html += "<div class='meta-row'><b>Original price</b><span id='metaPrice'></span></div>";
+            html += "<div class='meta-row'><b>SKU</b><span id='metaSku'></span></div>";
+            html += "<button id='metaEditBtn' class='btn-secondary' style='margin-top:16px;'>Edit this band</button>";
+            html += "</div></div>";
+
+            // LIST VIEW wrapper open
+            html += "<div id='listView'>";
+
+            // CHECKED-OUT / PACKED SECTION
+            {
+                int coCount = 0;
+                for(int i=0; i<bandCount; i++) if(registeredBands[i].checkedOut) coCount++;
+                if(coCount > 0) {
+                    html += "<div class='card' style='border:2px solid #ffe082;background:#fffde7;'>";
+                    html += "<div style='display:flex;align-items:center;gap:10px;margin-bottom:12px;'>";
+                    html += "<span style='font-size:1.4em;'>&#x1f9f3;</span>";
+                    html += "<div><div style='font-weight:800;color:#e65100;font-size:1em;'>Packed for Trip</div>";
+                    html += "<div class='meta'>" + String(coCount) + " band" + (coCount==1?"":"s") + " checked out &mdash; scan to check back in</div></div>";
+                    html += "</div>";
+                    html += "<div style='display:flex;flex-wrap:wrap;gap:10px;'>";
+                    for(int i=0; i<bandCount; i++) {
+                        if(!registeredBands[i].checkedOut) continue;
+                        String escImg2  = htmlEscape(String(registeredBands[i].imageUrl));
+                        String escName2 = htmlEscape(String(registeredBands[i].name));
+                        String escOwner2 = htmlEscape(strlen(registeredBands[i].owner)>0 ? String(registeredBands[i].owner) : "None");
+                        html += "<div style='display:flex;flex-direction:column;align-items:center;gap:4px;'>";
+                        if(strlen(registeredBands[i].imageUrl) > 5) {
+                            html += "<img src='" + escImg2 + "' style='width:70px;height:100px;object-fit:contain;border-radius:8px;background:#fff;padding:4px;border:1px solid #ffe082;'>";
+                        } else {
+                            html += "<div style='width:70px;height:100px;border-radius:8px;background:#fff;border:1px solid #ffe082;display:flex;align-items:center;justify-content:center;font-size:1.6em;'>&#127925;</div>";
+                        }
+                        html += "<div style='font-size:0.78em;font-weight:700;color:#1a237e;text-align:center;max-width:80px;word-break:break-word;'>" + escName2 + "</div>";
+                        html += "<div style='font-size:0.7em;color:#888;'>" + escOwner2 + "</div>";
+                        html += "<a href='/checkinout?id=" + String(i) + "&out=0' class='btn-del' style='background:#43a047;font-size:0.72em;padding:4px 8px;' onclick='return confirm(\"Check in " + escName2 + "?\")'>Check In</a>";
+                        html += "</div>";
+                    }
+                    html += "</div></div>";
+                }
+            }
 
             // BAND CARDS (summary + expandable details)
 
             // BAND CARDS (summary + expandable details)
             for(int i=0; i < bandCount; i++) {
+                if(registeredBands[i].checkedOut) continue; // shown in Packed section
                 char hStr[8]; sprintf(hStr, "#%06X", (unsigned int)registeredBands[i].color);
 
                 String ownerStr = (strlen(registeredBands[i].owner) > 0) ? String(registeredBands[i].owner) : String("None");
@@ -826,7 +1017,7 @@ void initWebServer() {
                 String escOp    = htmlEscape(String(registeredBands[i].originalPrice));
                 String escSku   = htmlEscape(String(registeredBands[i].sku));
 
-                html += "<div class='card band-card'>";
+                html += "<div class='card band-card' data-owner='" + escOwner + "' data-loc='" + escLoc + "' data-idx='" + String(i) + "'>";
 
                 // Summary header (click to expand)
                 html += "<div class='summary' onclick='toggleDetails(" + String(i) + ")'>";
@@ -853,6 +1044,14 @@ void initWebServer() {
                 }
 
                 html += "<form action='/update' method='GET'><input type='hidden' name='id' value='" + String(i) + "'>";
+                // MagicBandCollectors Section (shown first)
+                html += "<div class='section'>";
+                html += "<div class='section-title'>MagicBandCollectors</div>";
+                html += "<p class='meta' style='margin-bottom:10px;line-height:1.5;'>Search for your band on <b>magicbandcollectors.com</b>, open the listing page, then paste the full URL or just the ID number from the URL (e.g. <code>2535</code> from <code>.../?id=2535</code>). Hit Fetch to auto-fill the details below.</p>";
+                html += "<div class='field'><label>URL or ID from MagicBandCollectors.com</label><input id='mbc" + String(i) + "' type='text' name='mbc' value='" + escMbc + "' placeholder='e.g. 2535 or full URL'></div>";
+                html += "<button type='button' class='btn-secondary' onclick='lookupMbc(" + String(i) + "); return false;'>Fetch Details from MagicBandCollectors</button>";
+                html += "<div id='mbcStatus" + String(i) + "' class='status' style='display:none;'></div>";
+                html += "</div>";
                 // General Section
                 html += "<div class='section'>";
                 html += "<div class='section-title'>General</div>";
@@ -878,13 +1077,6 @@ void initWebServer() {
                     }
                 }
                 html += "</select></div>";
-                html += "</div>";
-                // MagicBandCollectors Section
-                html += "<div class='section'>";
-                html += "<div class='section-title'>MagicBandCollectors</div>";
-                html += "<div class='field'><label>MagicBandCollectors.com Listing</label><input id='mbc" + String(i) + "' type='text' name='mbc' value='" + escMbc + "' placeholder='2535 or full URL'></div>";
-                html += "<button type='button' class='btn-secondary' onclick='lookupMbc(" + String(i) + "); return false;'>Fetch from MagicBandCollectors</button>";
-                html += "<div id='mbcStatus" + String(i) + "' class='status' style='display:none;'></div>";
                 html += "</div>";
                 // Imported Metadata Section
                 html += "<div class='section'>";
@@ -925,27 +1117,17 @@ void initWebServer() {
                 html += "</div>"; // card
             }
 
+            html += "</div>"; // #listView
+
             // SETTINGS (collapsible)
             html += "<div class='card'>";
             html += "<div class='settings-header' onclick='toggleSettings()'>Settings (Owners, Locations, Hub)</div>";
             html += "<div class='settings-body' id='settings'>";
 
-            // BACKUP / RESTORE
-            html += "<hr><h3>Backup / Restore</h3>";
-            html += "<div class='meta' style='margin-bottom:10px;'>Export your bands before flashing new firmware. Import restores bands + owners + locations + hub timeouts.</div>";
-            html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/export' download>Export Backup (JSON)</a>";
-
             // THEME BUILDER LINK
             html += "<hr><h3>Theme Builder</h3>";
             html += "<div class='meta' style='margin-bottom:10px;'>Create custom LED light patterns with your own colours and audio files.</div>";
             html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/themes'>Open Theme Builder</a>";
-
-            html += "<hr><form action='/import' method='POST'>";
-            html += "<div class='field'><label>Import Backup JSON</label>";
-            html += "<textarea name='data' style='width:100%;min-height:140px;padding:10px;border-radius:8px;border:1px solid #ccc;font-size:14px;' placeholder='Paste exported JSON here...'></textarea>";
-            html += "</div>";
-            html += "<input type='submit' class='btn-save' value='Import Backup' onclick='return confirm(\"Import will overwrite all stored bands. Continue?\")'>";
-            html += "</form>";
 
             // OWNERS
             html += "<h3>Owners</h3>";
@@ -997,8 +1179,20 @@ void initWebServer() {
 
             // (Hub Settings removed)
 
+            // BACKUP / RESTORE
+            html += "<hr><h3>Backup / Restore</h3>";
+            html += "<div class='meta' style='margin-bottom:10px;'>Export your bands before flashing new firmware. Import restores bands + owners + locations + hub timeouts.</div>";
+            html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/export' download>Export Backup (JSON)</a>";
+            html += "<hr><form action='/import' method='POST'>";
+            html += "<div class='field'><label>Import Backup JSON</label>";
+            html += "<textarea name='data' style='width:100%;min-height:140px;padding:10px;border-radius:8px;border:1px solid #ccc;font-size:14px;' placeholder='Paste exported JSON here...'></textarea>";
+            html += "</div>";
+            html += "<input type='submit' class='btn-save' value='Import Backup' onclick='return confirm(\"Import will overwrite all stored bands. Continue?\")'>";
+            html += "</form>";
+
             html += "</div></div>";
         }
+        html += "</div>"; // container
         html += "</body></html>";
         request->send(200, "text/html; charset=utf-8", html);
     });
@@ -1061,9 +1255,34 @@ void initWebServer() {
         json += "\"type\":\"" + jsonEscape(type) + "\",";
         json += "\"knownIndex\":" + String(kidx) + ",";
         json += "\"name\":\"" + jsonEscape(name) + "\",";
-        json += "\"img\":\"" + jsonEscape(img) + "\"";
+        json += "\"img\":\"" + jsonEscape(img) + "\",";
+        json += "\"checkedOut\":" + String((kidx >= 0 && kidx < bandCount) ? (int)registeredBands[kidx].checkedOut : 0);
         json += "}";
         request->send(200, "application/json", json);
+    });
+
+    // ROUTE: Check In / Check Out a band
+    server.on("/checkinout", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(!request->hasParam("id") || !request->hasParam("out")){
+            request->send(400, "application/json", "{\"ok\":false}");
+            return;
+        }
+        int id  = request->getParam("id")->value().toInt();
+        int out = request->getParam("out")->value().toInt();
+        if(id < 0 || id >= bandCount){
+            request->send(400, "application/json", "{\"ok\":false}");
+            return;
+        }
+        registeredBands[id].checkedOut = (out != 0) ? 1 : 0;
+        prefs.begin("mbands", false);
+        prefs.putBytes(("b" + String(id)).c_str(), &registeredBands[id], sizeof(BandRecord));
+        prefs.end();
+        // If called via fetch (XHR) return JSON; otherwise redirect back to main page
+        if(request->hasHeader("X-Requested-With")) {
+            request->send(200, "application/json", "{\"ok\":true}");
+        } else {
+            request->redirect("/");
+        }
     });
 
     // ROUTE: Confirm saving a newly scanned band (yes/no)
@@ -1235,6 +1454,18 @@ void initWebServer() {
         } else {
             request->redirect("/?msg=lookup_ok&open=" + String(id));
         }
+    });
+
+    // Poll endpoint: JS calls this every second while a lookup is running
+    server.on("/lookup_poll", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json;
+        if(g_lookupInProgress) {
+            json = "{\"done\":false}";
+        } else {
+            json = "{\"done\":true,\"result\":" + String((int)g_lookupResult) +
+                   ",\"bandId\":" + String((int)g_lookupBandId) + "}";
+        }
+        request->send(200, "application/json", json);
     });
 
     server.on("/delete", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1715,7 +1946,7 @@ void initWebServer() {
                     return;
                 }
                 _sdUploadName = safe;
-                String path = "/sdcard/" + safe;
+                String path = "/" + safe;
                 _sdUploadFile = SD_MMC.open(path.c_str(), FILE_WRITE);
                 if (!_sdUploadFile) {
                     _sdUploadError = true;
@@ -1794,8 +2025,8 @@ void initWebServer() {
         html += ".field label{display:block;font-size:0.85em;color:#555;margin-bottom:4px;font-weight:600;}";
         html += ".field input[type=text],.field select{width:100%;padding:8px;border-radius:6px;border:1px solid #ccc;box-sizing:border-box;font-size:15px;}";
         html += ".btn-save{background:#2ed573;color:white;border:none;padding:12px;width:100%;border-radius:8px;cursor:pointer;font-size:16px;box-sizing:border-box;margin-top:6px;}";
-        html += ".btn-del{background:#ff4757;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:0.82em;cursor:pointer;}";
-        html += ".btn-edit{background:#3b4ce2;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:0.82em;cursor:pointer;text-decoration:none;display:inline-block;margin-right:6px;}";
+        html += ".btn-del{background:#ff4757;color:white;border:none;padding:6px 14px;border-radius:5px;font-size:0.82em;cursor:pointer;}";
+        html += ".btn-edit{background:#3b4ce2;color:white;border:none;padding:6px 14px;border-radius:5px;font-size:0.82em;cursor:pointer;text-decoration:none;display:inline-block;}";
         html += ".btn-back{background:#eef1ff;color:#3b4ce2;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:15px;text-decoration:none;display:inline-block;margin-bottom:14px;}";
         html += ".btn-addcol{background:#eef1ff;color:#3b4ce2;border:1px solid #b0b9f5;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:0.88em;margin-top:4px;}";
         html += ".theme-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee;}";
@@ -1908,7 +2139,7 @@ void initWebServer() {
                 html += "</span></div>";
                 html += "<div style='display:flex;gap:6px;align-items:center;'>";
                 html += "<a class='btn-edit' href='/themes?edit=" + String((unsigned int)customThemes[i].id) + "'>Edit</a>";
-                html += "<form action='/theme_delete' method='GET' onsubmit='return confirm(\"Delete theme?\")'>";
+                html += "<form action='/theme_delete' method='GET' onsubmit='return confirm(\"Delete theme?\")' style='display:inline;'>";
                 html += "<input type='hidden' name='id' value='" + String((unsigned int)customThemes[i].id) + "'>";
                 html += "<button type='submit' class='btn-del'>Delete</button></form>";
                 html += "</div></div>";
