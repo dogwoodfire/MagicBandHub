@@ -14,6 +14,8 @@
 #else
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <SD_MMC.h>
+#include "SD_Card.h"
 // Forward-declare LVGL event type so we can keep stub/extern signatures without pulling LVGL in.
 typedef struct _lv_event_t lv_event_t;
 #endif
@@ -600,6 +602,85 @@ static bool fetchMagicBandCollectors(int listingId, String &outTitle, String &ou
     return true;
 }
 
+// =========================================================================
+// Custom Theme storage
+// =========================================================================
+CustomTheme customThemes[CUSTOM_THEME_MAX];
+int customThemeCount = 0;
+
+// SD upload state (used by /upload_audio handler)
+File   _sdUploadFile;
+bool   _sdUploadError = false;
+String _sdUploadName;
+
+void loadCustomThemesFromPrefs() {
+    prefs.begin("cthemes", true);
+    int c = prefs.getInt("count", 0);
+    if (c < 0 || c > CUSTOM_THEME_MAX) c = 0;
+    customThemeCount = c;
+    for (int i = 0; i < customThemeCount; i++) {
+        prefs.getBytes(("t" + String(i)).c_str(), &customThemes[i], sizeof(CustomTheme));
+    }
+    prefs.end();
+}
+
+int findCustomTheme(uint16_t themeId) {
+    for (int i = 0; i < customThemeCount; i++) {
+        if (customThemes[i].id == themeId) return i;
+    }
+    return -1;
+}
+
+static void saveCustomThemesToPrefs() {
+    prefs.begin("cthemes", false);
+    prefs.putInt("count", customThemeCount);
+    for (int i = 0; i < customThemeCount; i++) {
+        prefs.putBytes(("t" + String(i)).c_str(), &customThemes[i], sizeof(CustomTheme));
+    }
+    prefs.end();
+}
+
+static const char* customThemeLoopName(uint8_t p) {
+    switch (p) {
+        case CTL_NONE:           return "None (stop)";
+        case CTL_SPINNING_COMET: return "Spinning Comet";
+        case CTL_GENTLE_PULSE:   return "Gentle Pulse";
+        case CTL_RAINBOW_SPIN:   return "Rainbow Spin";
+    }
+    return "Unknown";
+}
+
+static String customThemeSummary(const CustomTheme& ct) {
+    String s;
+    if (ct.phases & CTP_PHASE_COMET) s += "Comet ";
+    if (ct.phases & CTP_PHASE_FILL)  s += "Fill ";
+    if (ct.phases & CTP_PHASE_PULSE) s += "Pulse ";
+    s += String("→ ") + String(customThemeLoopName(ct.loopPattern));
+    return s;
+}
+
+// Build the band-edit Theme dropdown including custom themes
+static String buildFullThemeSelectOptions(uint16_t currentId) {
+    String out;
+    // Built-in themes
+    for (int i = 0; i < kThemeCount; i++) {
+        String sel = ((uint16_t)i == currentId) ? "selected" : "";
+        out += "<option value='" + String(i) + "' " + sel + ">"
+            + htmlEscape(String(kThemeNames[i])) + "</option>";
+    }
+    // Custom themes
+    if (customThemeCount > 0) {
+        out += "<optgroup label='Custom Themes'>";
+        for (int i = 0; i < customThemeCount; i++) {
+            String sel = (customThemes[i].id == currentId) ? "selected" : "";
+            out += "<option value='" + String(customThemes[i].id) + "' " + sel + ">"
+                + htmlEscape(String(customThemes[i].name)) + "</option>";
+        }
+        out += "</optgroup>";
+    }
+    return out;
+}
+
 void initWebServer() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
@@ -823,7 +904,7 @@ void initWebServer() {
 
                 // Theme dropdown
                 html += "<div class='field'><label>Theme</label><select name='theme'>";
-                html += buildThemeSelectOptions(registeredBands[i].themeId);
+                html += buildFullThemeSelectOptions(registeredBands[i].themeId);
                 html += "</select></div>";
 
                 // Color picker
@@ -853,6 +934,11 @@ void initWebServer() {
             html += "<hr><h3>Backup / Restore</h3>";
             html += "<div class='meta' style='margin-bottom:10px;'>Export your bands before flashing new firmware. Import restores bands + owners + locations + hub timeouts.</div>";
             html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/export' download>Export Backup (JSON)</a>";
+
+            // THEME BUILDER LINK
+            html += "<hr><h3>Theme Builder</h3>";
+            html += "<div class='meta' style='margin-bottom:10px;'>Create custom LED light patterns with your own colours and audio files.</div>";
+            html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/themes'>Open Theme Builder</a>";
 
             html += "<hr><form action='/import' method='POST'>";
             html += "<div class='field'><label>Import Backup JSON</label>";
@@ -1055,14 +1141,17 @@ void initWebServer() {
                     }
                 }
 
-                // Theme: apply if present; allow 0 (Default)
+                // Theme: apply if present; allow 0 (Default), built-in IDs, or custom IDs (>=100)
                 {
                     if (request->hasParam("theme")) {
                         String t = request->getParam("theme")->value();
                         t.trim();
                         int tid = t.toInt();
                         if (tid < 0) tid = 0;
-                        if (tid >= kThemeCount) tid = kThemeCount - 1;
+                        // Allow built-in range OR valid custom id
+                        bool isBuiltIn  = (tid < kThemeCount);
+                        bool isCustom   = (findCustomTheme((uint16_t)tid) >= 0);
+                        if (!isBuiltIn && !isCustom) tid = 0;
                         registeredBands[id].themeId = (uint16_t)tid;
                     }
                 }
@@ -1312,7 +1401,27 @@ void initWebServer() {
         json += "\"settings\":{";
         json += "\"idleTimeout\":" + String((unsigned int)idleTimeout) + ",";
         json += "\"sleepTimeout\":" + String((unsigned int)sleepTimeout);
-        json += "}";
+        json += "},";
+
+        // Custom themes
+        json += "\"customThemes\":[";
+        for (int i = 0; i < customThemeCount; i++) {
+            if (i > 0) json += ",";
+            json += "{";
+            json += "\"id\":" + String((unsigned int)customThemes[i].id) + ",";
+            json += "\"name\":\"" + jsonEscape(String(customThemes[i].name)) + "\",";
+            json += "\"phases\":" + String((unsigned int)customThemes[i].phases) + ",";
+            json += "\"loop\":" + String((unsigned int)customThemes[i].loopPattern) + ",";
+            json += "\"colors\":[";
+            for (uint8_t ci = 0; ci < customThemes[i].colorCount && ci < CUSTOM_THEME_MAX_COLORS; ci++) {
+                if (ci > 0) json += ",";
+                json += String((unsigned int)customThemes[i].colors[ci]);
+            }
+            json += "],";
+            json += "\"audioFile\":\"" + jsonEscape(String(customThemes[i].audioFile)) + "\"";
+            json += "}";
+        }
+        json += "]";  // closes customThemes"
 
         json += "}";
 
@@ -1412,7 +1521,8 @@ void initWebServer() {
             int theme = 0;
             if (jsonFindValueInt(obj, "themeId", theme)) {
                 if (theme < 0) theme = 0;
-                if (theme >= kThemeCount) theme = kThemeCount - 1;
+                // Built-in IDs are 0..kThemeCount-1; custom IDs are CUSTOM_THEME_ID_BASE+.
+                // Accept any non-negative value; invalid ones fall back at runtime.
                 br.themeId = (uint16_t)theme;
             } else {
                 br.themeId = 0;
@@ -1493,10 +1603,520 @@ void initWebServer() {
         prefs.putUInt("sleep", sleepTimeout);
         prefs.end();
 
+        // Parse custom themes (best-effort)
+        {
+            String ctNeedle = "\"customThemes\":[";
+            int ctPos = data.indexOf(ctNeedle);
+            if (ctPos >= 0) {
+                int ctStart = data.indexOf("[", ctPos);
+                int ctEnd   = data.indexOf("]", ctStart);
+                if (ctStart >= 0 && ctEnd > ctStart) {
+                    String ctArr = data.substring(ctStart + 1, ctEnd);
+                    int ci = 0; int ctImported = 0;
+                    while (ci < (int)ctArr.length() && ctImported < CUSTOM_THEME_MAX) {
+                        int os = ctArr.indexOf("{", ci);
+                        if (os < 0) break;
+                        int depth = 0; int oe = -1;
+                        for (int p = os; p < (int)ctArr.length(); p++) {
+                            if (ctArr[p] == '{') depth++;
+                            else if (ctArr[p] == '}') { depth--; if (depth == 0) { oe = p; break; } }
+                        }
+                        if (oe < 0) break;
+                        String cobj = ctArr.substring(os, oe + 1);
+                        CustomTheme ct; memset(&ct, 0, sizeof(ct));
+                        int ctid = CUSTOM_THEME_ID_BASE + ctImported;
+                        jsonFindValueInt(cobj, "id", ctid);
+                        ct.id = (uint16_t)ctid;
+                        String sv;
+                        if (jsonFindValueString(cobj, "name", sv)) strncpy(ct.name, sv.c_str(), sizeof(ct.name) - 1);
+                        int pv = 0; jsonFindValueInt(cobj, "phases", pv); ct.phases = (uint8_t)pv;
+                        int lv = 0; jsonFindValueInt(cobj, "loop",   lv); ct.loopPattern = (uint8_t)lv;
+                        // Parse colors array
+                        {
+                            int cArr = cobj.indexOf("\"colors\":");
+                            if (cArr >= 0) {
+                                int cb = cobj.indexOf("[", cArr);
+                                int ce = cobj.indexOf("]", cb);
+                                if (cb >= 0 && ce > cb) {
+                                    String ca = cobj.substring(cb + 1, ce);
+                                    uint8_t nc = 0;
+                                    int ci2 = 0;
+                                    while (ci2 < (int)ca.length() && nc < CUSTOM_THEME_MAX_COLORS) {
+                                        while (ci2 < (int)ca.length() && (ca[ci2] == ' ' || ca[ci2] == ',')) ci2++;
+                                        if (ci2 >= (int)ca.length()) break;
+                                        int end2 = ci2;
+                                        while (end2 < (int)ca.length() && ca[end2] != ',' && ca[end2] != ']') end2++;
+                                        String tok = ca.substring(ci2, end2);
+                                        tok.trim();
+                                        if (tok.length() > 0) ct.colors[nc++] = (uint32_t)tok.toInt();
+                                        ci2 = end2;
+                                    }
+                                    ct.colorCount = nc > 0 ? nc : 1;
+                                }
+                            }
+                        }
+                        if (jsonFindValueString(cobj, "audioFile", sv)) strncpy(ct.audioFile, sv.c_str(), sizeof(ct.audioFile) - 1);
+                        customThemes[ctImported++] = ct;
+                        ci = oe + 1;
+                    }
+                    customThemeCount = ctImported;
+                    saveCustomThemesToPrefs();
+                }
+            }
+        }
+
         loadCategoriesFromPrefs();
         fn_refresh_roller(NULL);
 
         request->redirect("/?msg=import_ok");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /sd_status — reports whether SD card is mounted
+    // -------------------------------------------------------------------------
+    server.on("/sd_status", HTTP_GET, [](AsyncWebServerRequest *request){
+        bool ready = isSDReady && (SD_MMC.cardType() != CARD_NONE);
+        request->send(200, "application/json", ready ? "{\"ready\":true}" : "{\"ready\":false}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /upload_audio  POST multipart — saves audio file to SD root
+    // -------------------------------------------------------------------------
+    server.on("/upload_audio", HTTP_POST,
+        [](AsyncWebServerRequest *request) {
+            extern File   _sdUploadFile;
+            extern bool   _sdUploadError;
+            extern String _sdUploadName;
+            if (_sdUploadFile) _sdUploadFile.close();
+            if (_sdUploadError) {
+                request->send(400, "application/json", "{\"ok\":false,\"error\":\"Upload failed or bad file type\"}");
+            } else {
+                request->send(200, "application/json", "{\"ok\":true,\"name\":\"" + jsonEscape(_sdUploadName) + "\"}");
+            }
+        },
+        [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+            extern File   _sdUploadFile;
+            extern bool   _sdUploadError;
+            extern String _sdUploadName;
+            if (index == 0) {
+                _sdUploadError = false;
+                if (_sdUploadFile) _sdUploadFile.close();
+                // Sanitise: strip path, validate extension
+                String safe = filename;
+                int sl = safe.lastIndexOf('/');
+                if (sl >= 0) safe = safe.substring(sl + 1);
+                safe.replace("..", "");
+                String lower = safe; lower.toLowerCase();
+                bool goodExt = lower.endsWith(".mp3") || lower.endsWith(".wav") ||
+                               lower.endsWith(".aac") || lower.endsWith(".flac");
+                if (!goodExt || safe.length() == 0 || !isSDReady) {
+                    _sdUploadError = true;
+                    Serial.println("Audio upload rejected: bad extension or no SD.");
+                    return;
+                }
+                _sdUploadName = safe;
+                String path = "/sdcard/" + safe;
+                _sdUploadFile = SD_MMC.open(path.c_str(), FILE_WRITE);
+                if (!_sdUploadFile) {
+                    _sdUploadError = true;
+                    Serial.printf("Audio upload: cannot open %s\n", path.c_str());
+                    return;
+                }
+                Serial.printf("Audio upload started: %s\n", path.c_str());
+            }
+            if (!_sdUploadError && _sdUploadFile && len > 0) {
+                _sdUploadFile.write(data, len);
+            }
+            if (final && _sdUploadFile) {
+                _sdUploadFile.close();
+                Serial.println("Audio upload complete.");
+            }
+        }
+    );
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /sd_files — returns JSON array of audio files at SD root
+    // -------------------------------------------------------------------------
+    server.on("/sd_files", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json = "[";
+        bool first = true;
+
+        // SD_MMC is already mounted by main.cpp; just open root.
+        File root = SD_MMC.open("/");
+        if (root) {
+            File f = root.openNextFile();
+            while (f) {
+                if (!f.isDirectory()) {
+                    String fname = String(f.name());
+                    // Keep only audio files
+                    fname.toLowerCase();
+                    if (fname.endsWith(".mp3") || fname.endsWith(".wav") || fname.endsWith(".aac") || fname.endsWith(".flac")) {
+                        // Get just the basename
+                        int sl = fname.lastIndexOf('/');
+                        String base = (sl >= 0) ? String(f.name()).substring(sl + 1) : String(f.name());
+                        // Skip macOS metadata files
+                        if (base.startsWith("._")) { f = root.openNextFile(); continue; }
+                        if (!first) json += ",";
+                        first = false;
+                        json += "\"" + jsonEscape(base) + "\"";
+                    }
+                }
+                f = root.openNextFile();
+            }
+            root.close();
+        }
+
+        json += "]";
+        request->send(200, "application/json", json);
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /themes — Theme Builder page (create + edit)
+    // -------------------------------------------------------------------------
+    server.on("/themes", HTTP_GET, [](AsyncWebServerRequest *request){
+        bool isEdit = false;
+        int editIdx = -1;
+        if (request->hasParam("edit")) {
+            uint16_t eid = (uint16_t)request->getParam("edit")->value().toInt();
+            editIdx = findCustomTheme(eid);
+            isEdit = (editIdx >= 0);
+        }
+
+        String html;
+        html.reserve(9000);
+
+        html += "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
+        html += "<style>";
+        html += "body{font-family:sans-serif;text-align:center;background:#3677A3;padding:20px;}";
+        html += "h1{color:#fff;font-weight:800;margin:10px 0 18px 0;}";
+        html += ".card{background:white;border-radius:15px;padding:16px;margin:10px auto;max-width:440px;box-shadow:2px 2px 10px rgba(11,18,108,0.6);}";
+        html += ".field{margin-bottom:12px;text-align:left;}";
+        html += ".field label{display:block;font-size:0.85em;color:#555;margin-bottom:4px;font-weight:600;}";
+        html += ".field input[type=text],.field select{width:100%;padding:8px;border-radius:6px;border:1px solid #ccc;box-sizing:border-box;font-size:15px;}";
+        html += ".btn-save{background:#2ed573;color:white;border:none;padding:12px;width:100%;border-radius:8px;cursor:pointer;font-size:16px;box-sizing:border-box;margin-top:6px;}";
+        html += ".btn-del{background:#ff4757;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:0.82em;cursor:pointer;}";
+        html += ".btn-edit{background:#3b4ce2;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:0.82em;cursor:pointer;text-decoration:none;display:inline-block;margin-right:6px;}";
+        html += ".btn-back{background:#eef1ff;color:#3b4ce2;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:15px;text-decoration:none;display:inline-block;margin-bottom:14px;}";
+        html += ".btn-addcol{background:#eef1ff;color:#3b4ce2;border:1px solid #b0b9f5;padding:7px 14px;border-radius:6px;cursor:pointer;font-size:0.88em;margin-top:4px;}";
+        html += ".theme-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee;}";
+        html += ".prev{width:20px;height:20px;border-radius:50%;border:2px solid #ccc;display:inline-block;vertical-align:middle;margin-right:3px;}";
+        html += ".sec{font-size:0.8em;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin:12px 0 6px 0;text-align:left;}";
+        html += ".cr{display:flex;gap:8px;align-items:center;margin-bottom:6px;}";
+        html += ".cr input[type=color]{width:42px;height:34px;padding:2px;border-radius:6px;border:1px solid #ccc;cursor:pointer;flex-shrink:0;}";
+        html += ".cr input[type=text]{flex:1;}";
+        html += ".cbr{display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;}";
+        html += ".cbr label{display:flex;align-items:center;gap:5px;font-size:0.93em;font-weight:500;color:#333;cursor:pointer;}";
+        html += ".cbr input[type=checkbox]{width:16px;height:16px;}";
+        html += "</style>";
+
+        // ---- JS ----
+        html += "<script>";
+        html += "var sdFiles=[];";
+        html += "window.addEventListener('load',function(){";
+        html += "  fetch('/sd_files').then(function(r){return r.json();}).then(function(f){";
+        html += "    sdFiles=f; var sel=document.getElementById('audioFile');";
+        html += "    if(sel){var cur=sel.getAttribute('data-current')||'';fillAudio(sel,cur);}";
+        html += "  }).catch(function(){});";
+        html += "  initSync();";
+        html += "});";
+        html += "function fillAudio(sel,cur){while(sel.options.length)sel.remove(0);";
+        html += "  var o=document.createElement('option');o.value='';o.text='-- None --';sel.appendChild(o);";
+        html += "  sdFiles.forEach(function(f){var o=document.createElement('option');o.value=f;o.text=f;if(f===cur)o.selected=true;sel.appendChild(o);});";
+        html += "}";
+        html += "function initSync(){";
+        html += "  for(var i=0;i<5;i++){(function(n){";
+        html += "    var cp=document.getElementById('cp'+n),ch=document.getElementById('ch'+n);";
+        html += "    if(cp&&ch){";
+        html += "      cp.addEventListener('input',function(){ch.value=cp.value;});";
+        html += "      ch.addEventListener('change',function(){var v=ch.value.trim();if(v&&v[0]!='#')v='#'+v;cp.value=v;});";
+        html += "    }";
+        html += "  })(i);}";
+        html += "}";
+        html += "function addCol(){";
+        html += "  for(var i=1;i<5;i++){var r=document.getElementById('cr'+i);if(r&&r.style.display==='none'){r.style.display='flex';return;}}";
+        html += "}";
+        html += "function remCol(i){";
+        html += "  var r=document.getElementById('cr'+i);if(r)r.style.display='none';";
+        html += "  var cp=document.getElementById('cp'+i),ch=document.getElementById('ch'+i);";
+        html += "  if(cp)cp.value='#000000';if(ch)ch.value='';";
+        html += "}";
+        html += "function onSub(){";
+        html += "  var ph=0;";
+        html += "  if(document.getElementById('ph_c')&&document.getElementById('ph_c').checked)ph|=1;";
+        html += "  if(document.getElementById('ph_f')&&document.getElementById('ph_f').checked)ph|=2;";
+        html += "  if(document.getElementById('ph_p')&&document.getElementById('ph_p').checked)ph|=4;";
+        html += "  document.getElementById('phases_val').value=ph;";
+        html += "  var vals=[];";
+        html += "  for(var i=0;i<5;i++){var r=document.getElementById('cr'+i),ch=document.getElementById('ch'+i);";
+        html += "    if(r&&r.style.display!=='none'&&ch&&ch.value.trim())vals.push(ch.value.trim());}";
+        html += "  if(!vals.length)vals.push('#00FF00');";
+        html += "  for(var j=0;j<5;j++){var h=document.getElementById('hc'+j);if(h)h.value=j<vals.length?vals[j]:'';}";
+        html += "  document.getElementById('cc_val').value=vals.length;";
+        html += "  return true;";
+        html += "}";
+        // Upload functions
+        html += "function uploadReady(){";
+        html += "  var f=document.getElementById('audioUpload').files[0];";
+        html += "  document.getElementById('uploadBtn').disabled=!f;";
+        html += "}";
+        html += "function doUpload(){";
+        html += "  var f=document.getElementById('audioUpload').files[0];";
+        html += "  if(!f) return;";
+        html += "  var btn=document.getElementById('uploadBtn');";
+        html += "  var st=document.getElementById('uploadStatus');";
+        html += "  btn.disabled=true; btn.value='Uploading\u2026'; st.textContent='';";
+        html += "  var fd=new FormData(); fd.append('file',f,f.name);";
+        html += "  fetch('/upload_audio',{method:'POST',body:fd})";
+        html += "    .then(function(r){return r.json();})";
+        html += "    .then(function(j){";
+        html += "      if(j.ok){";
+        html += "        st.textContent='\u2713 Uploaded: '+j.name;";
+        html += "        fetch('/sd_files').then(function(r){return r.json();}).then(function(files){";
+        html += "          sdFiles=files;";
+        html += "          var sel=document.getElementById('audioFile');";
+        html += "          if(sel) fillAudio(sel,j.name);";
+        html += "        });";
+        html += "      } else { st.textContent='Error: '+(j.error||'Upload failed'); }";
+        html += "      btn.disabled=false; btn.value='Upload to SD';";
+        html += "    }).catch(function(){ st.textContent='Upload error.'; btn.disabled=false; btn.value='Upload to SD'; });";
+        html += "}";
+        // Check SD on load and show upload card accordingly
+        html += "window.addEventListener('load',function(){";
+        html += "  fetch('/sd_status').then(function(r){return r.json();}).then(function(s){";
+        html += "    document.getElementById(s.ready?'upload_card':'nosd_card').style.display='';";
+        html += "  }).catch(function(){ document.getElementById('nosd_card').style.display=''; });";
+        html += "});";
+        html += "</script></head><body>";
+
+        html += "<a class='btn-back' href='/'>&#8592; Back to Hub</a>";
+        html += "<h1>Theme Builder</h1>";
+
+        // ---- Saved themes list ----
+        if (customThemeCount > 0) {
+            html += "<div class='card'><div class='sec'>Saved Custom Themes</div>";
+            for (int i = 0; i < customThemeCount; i++) {
+                html += "<div class='theme-row'><div style='text-align:left;'>";
+                // colour swatches
+                for (uint8_t ci = 0; ci < customThemes[i].colorCount && ci < CUSTOM_THEME_MAX_COLORS; ci++) {
+                    char sw[8]; snprintf(sw, sizeof(sw), "#%06X", (unsigned int)customThemes[i].colors[ci]);
+                    html += "<span class='prev' style='background:" + String(sw) + ";'></span>";
+                }
+                html += "<b>" + htmlEscape(String(customThemes[i].name)) + "</b><br>";
+                html += "<span style='font-size:0.8em;color:#666;'>" + customThemeSummary(customThemes[i]);
+                if (strlen(customThemes[i].audioFile))
+                    html += " &nbsp;&bull;&nbsp; " + htmlEscape(String(customThemes[i].audioFile));
+                html += "</span></div>";
+                html += "<div style='display:flex;gap:6px;align-items:center;'>";
+                html += "<a class='btn-edit' href='/themes?edit=" + String((unsigned int)customThemes[i].id) + "'>Edit</a>";
+                html += "<form action='/theme_delete' method='GET' onsubmit='return confirm(\"Delete theme?\")'>";
+                html += "<input type='hidden' name='id' value='" + String((unsigned int)customThemes[i].id) + "'>";
+                html += "<button type='submit' class='btn-del'>Delete</button></form>";
+                html += "</div></div>";
+            }
+            html += "</div>";
+        }
+
+        // ---- Create / Edit form ----
+        bool showForm = isEdit || (customThemeCount < CUSTOM_THEME_MAX);
+        if (showForm) {
+            html += "<div class='card'>";
+            html += "<div class='sec'>" + String(isEdit ? "Edit Theme" : "Create New Theme") + "</div>";
+            html += "<form action='/theme_save' method='GET' onsubmit='return onSub()'>";
+
+            if (isEdit)
+                html += "<input type='hidden' name='id' value='" + String((unsigned int)customThemes[editIdx].id) + "'>";
+
+            // Hidden fields filled by JS on submit
+            html += "<input type='hidden' id='phases_val' name='phases' value='0'>";
+            for (int j = 0; j < 5; j++)
+                html += "<input type='hidden' id='hc" + String(j) + "' name='hc" + String(j) + "' value=''>";
+            html += "<input type='hidden' id='cc_val' name='colorCount' value='1'>";
+
+            // Name
+            String nameVal = isEdit ? htmlEscape(String(customThemes[editIdx].name)) : String("");
+            html += "<div class='field'><label>Theme Name</label>";
+            html += "<input type='text' name='name' maxlength='31' required placeholder='e.g. Haunted Mansion' value='" + nameVal + "'></div>";
+
+            // ---- Phases (checkboxes) ----
+            uint8_t defPhases = isEdit ? customThemes[editIdx].phases : (CTP_PHASE_COMET | CTP_PHASE_FILL | CTP_PHASE_PULSE);
+            html += "<div class='field'><label>Opening Phases</label><div class='cbr'>";
+            html += "<label><input type='checkbox' id='ph_c'" + String((defPhases & CTP_PHASE_COMET) ? " checked" : "") + "> Comet Trail</label>";
+            html += "<label><input type='checkbox' id='ph_f'" + String((defPhases & CTP_PHASE_FILL)  ? " checked" : "") + "> Fill</label>";
+            html += "<label><input type='checkbox' id='ph_p'" + String((defPhases & CTP_PHASE_PULSE) ? " checked" : "") + "> Pulse</label>";
+            html += "</div></div>";
+
+            // ---- Loop pattern dropdown ----
+            uint8_t defLoop = isEdit ? customThemes[editIdx].loopPattern : CTL_SPINNING_COMET;
+            html += "<div class='field'><label>Ongoing LED Pattern</label><select name='loop'>";
+            const char* loopNames[CUSTOM_THEME_LOOP_COUNT] = {"None (stop after opening)", "Spinning Comet", "Gentle Pulse", "Rainbow Spin"};
+            for (uint8_t lp = 0; lp < CUSTOM_THEME_LOOP_COUNT; lp++) {
+                html += "<option value='" + String(lp) + "'" + String(defLoop == lp ? " selected" : "") + ">" + String(loopNames[lp]) + "</option>";
+            }
+            html += "</select></div>";
+
+            // ---- Colours ----
+            html += "<div class='field'><label>Colours (first is required)</label>";
+            uint8_t numColors = isEdit ? customThemes[editIdx].colorCount : 1;
+            if (numColors < 1) numColors = 1;
+            for (int ci = 0; ci < 5; ci++) {
+                char hexBuf[8];
+                if (isEdit && ci < customThemes[editIdx].colorCount)
+                    snprintf(hexBuf, sizeof(hexBuf), "#%06X", (unsigned int)customThemes[editIdx].colors[ci]);
+                else
+                    snprintf(hexBuf, sizeof(hexBuf), "#%s", ci == 0 ? "00FF00" : "0088FF");
+                bool visible = (ci == 0) || (isEdit && ci < (int)numColors);
+                html += "<div class='cr' id='cr" + String(ci) + "' style='display:" + String(visible ? "flex" : "none") + ";'>";
+                html += "<input type='color' id='cp" + String(ci) + "' value='" + String(hexBuf) + "'>";
+                html += "<input type='text'  id='ch" + String(ci) + "' value='" + String(visible ? hexBuf : "") + "' placeholder='#RRGGBB'>";
+                if (ci > 0)
+                    html += "<button type='button' class='btn-del' style='padding:4px 8px;' onclick='remCol(" + String(ci) + ")'>&#10005;</button>";
+                html += "</div>";
+            }
+            html += "<button type='button' class='btn-addcol' onclick='addCol()'>+ Add Colour</button></div>";
+
+            // ---- Audio file ----
+            String currentAudio = isEdit ? String(customThemes[editIdx].audioFile) : String("");
+            html += "<div class='field'><label>Audio File (SD Card Root)</label>";
+            html += "<select id='audioFile' name='audioFile' data-current='" + htmlEscape(currentAudio) + "'>";
+            html += "<option value=''>-- Loading... --</option></select></div>";
+
+            html += "<input type='submit' class='btn-save' value='" + String(isEdit ? "Update Theme" : "Save Theme") + "'>";
+            html += "</form></div>";
+        } else {
+            html += "<div class='card' style='color:#856404;background:#fff3cd;'>Maximum of ";
+            html += String(CUSTOM_THEME_MAX) + " custom themes reached. Delete one to add more.</div>";
+        }
+
+        // ---- SD audio upload card (visibility set by JS /sd_status check) ----
+        html += "<div id='upload_card' class='card' style='display:none;'>";
+        html += "<div class='sec'>Upload Audio to SD Card</div>";
+        html += "<div class='field'><label>File (.mp3, .wav, .aac, .flac)</label>";
+        html += "<input type='file' id='audioUpload' accept='.mp3,.wav,.aac,.flac' onchange='uploadReady()'></div>";
+        html += "<input type='button' id='uploadBtn' class='btn-save' value='Upload to SD' onclick='doUpload()' disabled>";
+        html += "<div id='uploadStatus' style='margin-top:8px;font-size:0.85em;color:#333;text-align:left;'></div>";
+        html += "</div>";
+        html += "<div id='nosd_card' class='card' style='display:none;color:#856404;background:#fff3cd;'>";
+        html += "&#9888;&#65039; Insert an SD card to upload audio files.";
+        html += "</div>";
+
+        html += "</body></html>";
+        request->send(200, "text/html; charset=utf-8", html);
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /theme_save — create or update a custom theme
+    // -------------------------------------------------------------------------
+    server.on("/theme_save", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (!request->hasParam("name")) {
+            request->redirect("/themes");
+            return;
+        }
+
+        bool isEdit = request->hasParam("id");
+        int editIdx = -1;
+        if (isEdit) {
+            uint16_t eid = (uint16_t)request->getParam("id")->value().toInt();
+            editIdx = findCustomTheme(eid);
+            if (editIdx < 0) isEdit = false;
+        }
+
+        if (!isEdit && customThemeCount >= CUSTOM_THEME_MAX) {
+            request->redirect("/themes");
+            return;
+        }
+
+        CustomTheme ct;
+        memset(&ct, 0, sizeof(ct));
+
+        ct.id = isEdit ? customThemes[editIdx].id
+                       : (uint16_t)(CUSTOM_THEME_ID_BASE + customThemeCount);
+
+        String nameVal = request->getParam("name")->value();
+        nameVal.trim();
+        strncpy(ct.name, nameVal.c_str(), sizeof(ct.name) - 1);
+
+        ct.phases = request->hasParam("phases")
+            ? (uint8_t)constrain(request->getParam("phases")->value().toInt(), 0, 7)
+            : (CTP_PHASE_COMET | CTP_PHASE_FILL | CTP_PHASE_PULSE);
+
+        ct.loopPattern = request->hasParam("loop")
+            ? (uint8_t)constrain(request->getParam("loop")->value().toInt(), 0, CUSTOM_THEME_LOOP_COUNT - 1)
+            : CTL_SPINNING_COMET;
+
+        // Parse up to 5 colours submitted as hc0..hc4
+        ct.colorCount = 0;
+        int reqColorCount = request->hasParam("colorCount")
+            ? constrain(request->getParam("colorCount")->value().toInt(), 1, CUSTOM_THEME_MAX_COLORS)
+            : 1;
+        for (int ci = 0; ci < 5 && ct.colorCount < CUSTOM_THEME_MAX_COLORS; ci++) {
+            String key = "hc" + String(ci);
+            if (request->hasParam(key)) {
+                String hexVal = request->getParam(key)->value();
+                hexVal.trim();
+                if (hexVal.length() > 0 && ct.colorCount < (uint8_t)reqColorCount) {
+                    ct.colors[ct.colorCount++] = hexToUint(hexVal);
+                }
+            }
+        }
+        if (ct.colorCount == 0) { ct.colors[0] = 0x00FF00; ct.colorCount = 1; }
+
+        if (request->hasParam("audioFile")) {
+            String af = request->getParam("audioFile")->value();
+            af.trim();
+            strncpy(ct.audioFile, af.c_str(), sizeof(ct.audioFile) - 1);
+        }
+
+        if (isEdit) {
+            customThemes[editIdx] = ct;
+        } else {
+            customThemes[customThemeCount++] = ct;
+        }
+        saveCustomThemesToPrefs();
+
+        request->redirect("/themes");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /theme_delete — remove a custom theme by id
+    // -------------------------------------------------------------------------
+    server.on("/theme_delete", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (!request->hasParam("id")) { request->redirect("/themes"); return; }
+
+        uint16_t delId = (uint16_t)request->getParam("id")->value().toInt();
+        int idx = findCustomTheme(delId);
+        if (idx < 0) { request->redirect("/themes"); return; }
+
+        // Shift array down
+        for (int i = idx; i < customThemeCount - 1; i++) {
+            customThemes[i] = customThemes[i + 1];
+        }
+        customThemeCount--;
+
+        // Reassign IDs sequentially so they stay contiguous
+        for (int i = 0; i < customThemeCount; i++) {
+            customThemes[i].id = (uint16_t)(CUSTOM_THEME_ID_BASE + i);
+        }
+
+        // Fix any bands that referenced the deleted or shifted IDs
+        for (int b = 0; b < bandCount; b++) {
+            if (registeredBands[b].themeId >= CUSTOM_THEME_ID_BASE) {
+                if (findCustomTheme(registeredBands[b].themeId) < 0) {
+                    registeredBands[b].themeId = 0; // reset to Default
+                }
+            }
+        }
+
+        saveCustomThemesToPrefs();
+
+        // Re-save bands (IDs may have shifted)
+        prefs.begin("mbands", false);
+        prefs.putInt("count", bandCount);
+        for (int i = 0; i < bandCount; i++) {
+            prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
+        }
+        prefs.end();
+
+        request->redirect("/themes");
     });
 }
 

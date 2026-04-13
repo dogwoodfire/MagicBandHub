@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <driver/i2s.h>
 #include "esp_err.h"
+#include <LittleFS.h>
 
 extern Audio audio;
 
@@ -222,7 +223,11 @@ bool Play_Music_file(const char* path) {
     if (!path || strlen(path) == 0) {
         return false;
     }
-    if (!SD_MMC.begin()) {
+    if (!isSDReady) {
+        Serial.println("Play_Music_file: SD not ready.");
+        return false;
+    }
+    if (!SD_MMC.begin("/sdcard", true, true)) {
         Serial.println("SD_MMC begin failed (audio file)");
         return false;
     }
@@ -273,6 +278,11 @@ static bool playResolvedFile(const char* requested) {
 }
 
 bool Play_Default_Band_Chime() {
+    if (!isSDReady) {
+        Serial.println("SD not ready — using LittleFS fallback chime.");
+        return Play_Fallback_Chime();
+    }
+
     const char* candidates[] = {
         "/MB_chime.wav",
         "/Chime.wav",
@@ -288,8 +298,20 @@ bool Play_Default_Band_Chime() {
         }
     }
 
-    Serial.println("Default band chime missing, falling back to test file search.");
-    Play_Music_test();
+    Serial.println("Default band chime missing on SD — using LittleFS fallback.");
+    return Play_Fallback_Chime();
+}
+
+bool Play_Fallback_Chime() {
+    const char* candidates[] = {"/MB_chime.wav", "/success.mp3"};
+    for (const char* c : candidates) {
+        if (LittleFS.exists(c)) {
+            Serial.printf("LittleFS fallback chime: %s\n", c);
+            audio.setVolume(14);
+            return audio.connecttoFS(LittleFS, c);
+        }
+    }
+    Serial.println("No fallback chime found in LittleFS.");
     return false;
 }
 
@@ -335,18 +357,12 @@ bool Play_Music_theme(uint16_t themeId) {
     const char* requested = isBooToYou ? "/bootoyou.mp3" : "/test.mp3";
 
     Serial.printf("Theme playback request: themeId=%u -> %s\n", themeId, requested);
-    if (playResolvedFile(requested)) {
+    if (isSDReady && playResolvedFile(requested)) {
         return true;
     }
 
-    if (!isBooToYou) {
-        Serial.println("Theme file missing, trying default band chime.");
-        return Play_Default_Band_Chime();
-    }
-
-    Serial.println("Requested theme file missing, falling back to test file search.");
-    Play_Music_test();
-    return false;
+    Serial.println("Theme file missing or no SD — using LittleFS fallback chime.");
+    return Play_Fallback_Chime();
 }
 
 void Audio_Loop() {

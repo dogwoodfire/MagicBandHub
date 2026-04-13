@@ -10,6 +10,7 @@
 #define SD_CMD_PIN      42 
 #define SD_D0_PIN       41 
 
+extern bool isSDReady;
 extern uint16_t SDCard_Size;
 extern uint16_t Flash_Size;
 

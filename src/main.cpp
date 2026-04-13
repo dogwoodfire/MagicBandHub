@@ -53,9 +53,16 @@ enum AnimationStyle : uint8_t {
     ANIMATION_STYLE_SPOOKY = 0,
     ANIMATION_STYLE_GREEN = 1,
     ANIMATION_STYLE_DEFAULT_CHIME = 2,
+    ANIMATION_STYLE_BOO = 3,
+    ANIMATION_STYLE_CUSTOM = 4,
 };
 AnimationStyle g_successAnimationStyle = ANIMATION_STYLE_SPOOKY;
 uint32_t g_successAnimationPhaseStart = 0;
+// Custom theme runtime state
+uint32_t g_customThemeColors[CUSTOM_THEME_MAX_COLORS]; // NeoPixel-packed
+uint8_t  g_customThemeColorCount = 0;
+uint8_t  g_customThemePhases = 0;   // bitmask of CTP_PHASE_*
+uint8_t  g_customThemeLoop = 0;     // CustomThemeLoop value
 
 static void audioFriendlyDelay(uint32_t ms) {
     const uint32_t start = millis();
@@ -75,11 +82,36 @@ static void renderSolidGreen(uint8_t brightness) {
     strip.show();
 }
 
-static void renderDefaultChimeStep(uint8_t headIndex) {
+// Phase 1: comet with a fading tail sweeps clockwise once.
+static void renderCometTrail(uint8_t headIndex) {
     strip.clear();
-    strip.setPixelColor(headIndex, strip.Color(0, 255, 0));
-    strip.setPixelColor((headIndex + LED_COUNT - 1) % LED_COUNT, strip.Color(0, 64, 0));
-    strip.setPixelColor((headIndex + 1) % LED_COUNT, strip.Color(0, 96, 0));
+    // tail lengths: head = full, -1 = 60%, -2 = 25%, -3 = 8%
+    const uint8_t tail[] = {255, 153, 64, 20};
+    for (uint8_t t = 0; t < 4 && t < LED_COUNT; t++) {
+        uint8_t idx = (headIndex + LED_COUNT - t) % LED_COUNT;
+        strip.setPixelColor(idx, strip.Color(0, tail[t], 0));
+    }
+    strip.show();
+}
+
+// Phase 2: fill ring one pixel at a time (cumulative).
+static void renderFillStep(uint8_t filledCount, uint8_t r = 0, uint8_t g = 255, uint8_t b = 0) {
+    strip.clear();
+    for (uint8_t i = 0; i < filledCount && i < LED_COUNT; i++) {
+        strip.setPixelColor(i, strip.Color(r, g, b));
+    }
+    strip.show();
+}
+
+// Phase 3: pulse — sinusoidal brightness on a solid green ring.
+static void renderPulse(uint32_t phaseElapsed) {
+    // Two full pulses in 1200 ms → period = 600 ms each.
+    const float angle = (float)phaseElapsed / 600.0f * 2.0f * 3.14159f;
+    // sin goes -1..+1; map to brightness 40..255.
+    float s = sinf(angle);
+    uint8_t brightness = (uint8_t)(40.0f + (215.0f * (s * 0.5f + 0.5f)));
+    strip.setBrightness(brightness);
+    strip.fill(strip.Color(0, 255, 0));
     strip.show();
 }
 
@@ -89,8 +121,14 @@ static void renderCometPulse(uint32_t baseColor, uint32_t elapsedMs) {
     const uint32_t green  = strip.Color(0, 220, 70);
     const uint32_t mint   = strip.Color(80, 255, 170);
 
-    const uint32_t primary = (g_successAnimationStyle == ANIMATION_STYLE_GREEN) ? green : orange;
-    const uint32_t accent  = (g_successAnimationStyle == ANIMATION_STYLE_GREEN) ? mint : purple;
+    uint32_t primary, accent;
+    if (g_successAnimationStyle == ANIMATION_STYLE_CUSTOM) {
+        primary = (g_customThemeColorCount > 0) ? g_customThemeColors[0] : g_successAnimationColor;
+        accent  = (g_customThemeColorCount > 1) ? g_customThemeColors[1] : primary;
+    } else {
+        primary = (g_successAnimationStyle == ANIMATION_STYLE_GREEN) ? green : orange;
+        accent  = (g_successAnimationStyle == ANIMATION_STYLE_GREEN) ? mint : purple;
+    }
 
     // Fast rotation with a jaunty two-step bounce in brightness.
     const uint8_t head = (elapsedMs / 90U) % LED_COUNT;
@@ -142,37 +180,240 @@ static void updateSuccessAnimation() {
 
     const uint32_t now = millis();
     if (g_successAnimationStyle == ANIMATION_STYLE_DEFAULT_CHIME) {
-        const uint32_t rotateElapsed = now - g_successAnimationStart;
-        const uint32_t stepMs = 120;
-        const uint8_t totalSteps = LED_COUNT * 2;
-        const uint32_t step = rotateElapsed / stepMs;
+        const uint32_t elapsed = now - g_successAnimationStart;
 
-        if (step < totalSteps) {
+        // --- Phase 1: Comet trail sweeps clockwise once ---
+        // One full rotation = LED_COUNT steps at 80 ms each.
+        const uint32_t cometStepMs = 80;
+        const uint32_t cometDuration = (uint32_t)LED_COUNT * cometStepMs;
+
+        if (elapsed < cometDuration) {
             if (now - g_successAnimationLastFrame >= 16) {
                 g_successAnimationLastFrame = now;
                 strip.setBrightness(255);
-                renderDefaultChimeStep(step % LED_COUNT);
+                uint8_t head = (uint8_t)(elapsed / cometStepMs);
+                if (head >= LED_COUNT) head = LED_COUNT - 1;
+                renderCometTrail(head);
             }
             return;
         }
 
-        if (g_successAnimationPhaseStart == 0) {
-            g_successAnimationPhaseStart = now;
-            renderSolidGreen(255);
-            Play_Default_Band_Chime();
-            Serial.println("Default band chime sequence reached audio sync point.");
+        // --- Phase 2: Rapid fill one-by-one ---
+        // Each pixel lights in 50 ms; total = LED_COUNT * 50 ms.
+        const uint32_t fillStepMs = 50;
+        const uint32_t fillStart = cometDuration;
+        const uint32_t fillDuration = (uint32_t)LED_COUNT * fillStepMs;
+
+        if (elapsed < fillStart + fillDuration) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                strip.setBrightness(255);
+                uint8_t filled = (uint8_t)((elapsed - fillStart) / fillStepMs) + 1;
+                if (filled > LED_COUNT) filled = LED_COUNT;
+                renderFillStep(filled);
+            }
+            return;
         }
 
-        const uint32_t fadeElapsed = now - g_successAnimationPhaseStart;
-        if (fadeElapsed >= 1500) {
+        // --- Phase 3: Start chime + two green pulses, then stop ---
+        if (g_successAnimationPhaseStart == 0) {
+            g_successAnimationPhaseStart = now;
+            Play_Default_Band_Chime();
+            Serial.println("Default band chime: audio started, pulsing green.");
+        }
+
+        const uint32_t pulseElapsed = now - g_successAnimationPhaseStart;
+        // Two full pulses over 1200 ms.
+        const uint32_t pulseDuration = 1200;
+
+        if (pulseElapsed >= pulseDuration) {
             stopSuccessAnimation();
             return;
         }
 
         if (now - g_successAnimationLastFrame >= 16) {
             g_successAnimationLastFrame = now;
-            const uint8_t brightness = (uint8_t)(((1500 - fadeElapsed) * 255U) / 1500U);
-            renderSolidGreen(brightness);
+            renderPulse(pulseElapsed);
+        }
+        return;
+    }
+
+    if (g_successAnimationStyle == ANIMATION_STYLE_BOO) {
+        const uint32_t elapsed = now - g_successAnimationStart;
+
+        // --- Phase 1: Rapid orange fill ---
+        const uint32_t fillStepMs = 50;
+        const uint32_t fillDuration = (uint32_t)LED_COUNT * fillStepMs;
+
+        if (elapsed < fillDuration) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                strip.setBrightness(255);
+                uint8_t filled = (uint8_t)(elapsed / fillStepMs) + 1;
+                if (filled > LED_COUNT) filled = LED_COUNT;
+                renderFillStep(filled, 255, 110, 0);
+            }
+            return;
+        }
+
+        // --- Phase 2: Pulse solid orange twice (1200 ms) ---
+        const uint32_t pulseStart = fillDuration;
+        const uint32_t pulseDuration = 1200;
+
+        if (elapsed < pulseStart + pulseDuration) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                const uint32_t pulseElapsed = elapsed - pulseStart;
+                const float angle = (float)pulseElapsed / 600.0f * 2.0f * 3.14159f;
+                float s = sinf(angle);
+                uint8_t brightness = (uint8_t)(40.0f + (215.0f * (s * 0.5f + 0.5f)));
+                strip.setBrightness(brightness);
+                strip.fill(strip.Color(255, 110, 0));
+                strip.show();
+            }
+            return;
+        }
+
+        // --- Phase 3: Start audio + orange/purple comet until song ends ---
+        if (g_successAnimationPhaseStart == 0) {
+            g_successAnimationPhaseStart = now;
+            Play_Music_theme(7);
+            Serial.println("Boo To You: audio started, orange/purple comet running.");
+        }
+
+        if (now - g_successAnimationLastFrame >= 16) {
+            g_successAnimationLastFrame = now;
+            strip.setBrightness(255);
+            AnimationStyle saved = g_successAnimationStyle;
+            g_successAnimationStyle = ANIMATION_STYLE_SPOOKY;
+            renderCometPulse(g_successAnimationColor, now - g_successAnimationPhaseStart);
+            g_successAnimationStyle = saved;
+        }
+
+        const uint32_t cometElapsed = now - g_successAnimationPhaseStart;
+        const bool audioEnded = !audio.isRunning();
+        const bool minRuntimeMet = cometElapsed >= 500;
+        const bool timedOut = cometElapsed >= 30000;
+        if ((audioEnded && minRuntimeMet) || timedOut) {
+            stopSuccessAnimation();
+        }
+        return;
+    }
+
+    // ---- Custom theme animation dispatcher ----
+    if (g_successAnimationStyle == ANIMATION_STYLE_CUSTOM) {
+        const uint32_t elapsed = now - g_successAnimationStart;
+
+        // Compute phase boundaries based on which phases are enabled.
+        const uint32_t cometDur = (g_customThemePhases & CTP_PHASE_COMET) ? (uint32_t)LED_COUNT * 80 : 0;
+        const uint32_t fillDur  = (g_customThemePhases & CTP_PHASE_FILL)  ? (uint32_t)LED_COUNT * 50 : 0;
+        const uint32_t pulseDur = (g_customThemePhases & CTP_PHASE_PULSE) ? 1200U : 0;
+        const uint32_t cometEnd = cometDur;
+        const uint32_t fillEnd  = cometEnd + fillDur;
+        const uint32_t pulseEnd = fillEnd  + pulseDur;
+
+        // Primary colour for opening phases
+        const uint32_t c0 = (g_customThemeColorCount > 0) ? g_customThemeColors[0] : strip.Color(0, 255, 0);
+        const uint8_t r0 = (c0 >> 16) & 0xFF;
+        const uint8_t g0 = (c0 >>  8) & 0xFF;
+        const uint8_t b0 =  c0        & 0xFF;
+
+        // --- Comet Trail phase ---
+        if ((g_customThemePhases & CTP_PHASE_COMET) && elapsed < cometEnd) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                strip.setBrightness(255);
+                uint8_t head = (uint8_t)(elapsed / 80);
+                if (head >= LED_COUNT) head = LED_COUNT - 1;
+                strip.clear();
+                const uint8_t levels[] = {255, 153, 64, 20};
+                for (uint8_t t = 0; t < 4 && t < LED_COUNT; t++) {
+                    uint8_t idx = (head + LED_COUNT - t) % LED_COUNT;
+                    strip.setPixelColor(idx, strip.Color(scaleChan(r0, levels[t]),
+                                                         scaleChan(g0, levels[t]),
+                                                         scaleChan(b0, levels[t])));
+                }
+                strip.show();
+            }
+            return;
+        }
+
+        // --- Fill phase ---
+        if ((g_customThemePhases & CTP_PHASE_FILL) && elapsed < fillEnd) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                strip.setBrightness(255);
+                const uint32_t fillElapsed = elapsed - cometEnd;
+                uint8_t filled = (uint8_t)(fillElapsed / 50) + 1;
+                if (filled > LED_COUNT) filled = LED_COUNT;
+                strip.clear();
+                for (uint8_t pi = 0; pi < filled; pi++) {
+                    uint8_t ci = (g_customThemeColorCount > 1) ? (pi % g_customThemeColorCount) : 0;
+                    strip.setPixelColor(pi, g_customThemeColors[ci]);
+                }
+                strip.show();
+            }
+            return;
+        }
+
+        // --- Pulse phase ---
+        if ((g_customThemePhases & CTP_PHASE_PULSE) && elapsed < pulseEnd) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                const uint32_t pulseElapsed = elapsed - fillEnd;
+                const float angle = (float)pulseElapsed / 600.0f * 2.0f * 3.14159f;
+                uint8_t br = (uint8_t)(40.0f + 215.0f * (sinf(angle) * 0.5f + 0.5f));
+                strip.setBrightness(br);
+                strip.fill(c0);
+                strip.show();
+            }
+            return;
+        }
+
+        // --- Loop phase (runs until audio ends or 30s timeout) ---
+        if (g_successAnimationPhaseStart == 0) g_successAnimationPhaseStart = now;
+        const uint32_t loopElapsed = now - g_successAnimationPhaseStart;
+
+        if (g_customThemeLoop == CTL_NONE) {
+            stopSuccessAnimation();
+            return;
+        }
+
+        if (g_customThemeLoop == CTL_GENTLE_PULSE) {
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                uint8_t ci = (g_customThemeColorCount > 1)
+                    ? (uint8_t)((loopElapsed / 4000) % g_customThemeColorCount) : 0;
+                const uint32_t cc = g_customThemeColors[ci];
+                const float angle = (float)(loopElapsed % 2000) / 2000.0f * 2.0f * 3.14159f;
+                uint8_t br = (uint8_t)(15.0f + 185.0f * (sinf(angle) * 0.5f + 0.5f));
+                strip.setBrightness(br);
+                strip.fill(cc);
+                strip.show();
+            }
+        } else {
+            // CTL_SPINNING_COMET or CTL_RAINBOW_SPIN
+            if (now - g_successAnimationLastFrame >= 16) {
+                g_successAnimationLastFrame = now;
+                strip.setBrightness(255);
+                if (g_customThemeLoop == CTL_RAINBOW_SPIN && g_customThemeColorCount > 1) {
+                    uint8_t ci0 = (uint8_t)((loopElapsed / 800) % g_customThemeColorCount);
+                    uint8_t ci1 = (ci0 + 1) % g_customThemeColorCount;
+                    uint32_t s0 = g_customThemeColors[0], s1 = g_customThemeColors[1];
+                    g_customThemeColors[0] = g_customThemeColors[ci0];
+                    g_customThemeColors[1] = g_customThemeColors[ci1];
+                    renderCometPulse(g_customThemeColors[0], loopElapsed);
+                    g_customThemeColors[0] = s0;
+                    g_customThemeColors[1] = s1;
+                } else {
+                    renderCometPulse(g_successAnimationColor, loopElapsed);
+                }
+            }
+        }
+
+        const bool audioEnded2 = !audio.isRunning();
+        if ((audioEnded2 && loopElapsed >= 250) || loopElapsed >= 30000) {
+            stopSuccessAnimation();
         }
         return;
     }
@@ -200,6 +441,22 @@ static void startScanAnimation(AnimationStyle style, uint32_t color) {
     g_successAnimationPhaseStart = 0;
     g_successAnimationActive = true;
     isSuccessActive = true;
+}
+
+// Dispatch a custom theme animation; audio must already be triggered before calling.
+static void startCustomThemeAnimation(const CustomTheme& ct) {
+    g_customThemePhases = ct.phases;
+    g_customThemeLoop   = ct.loopPattern;
+    // Convert 0xRRGGBB web colours to NeoPixel-packed format and store in array.
+    g_customThemeColorCount = (ct.colorCount < 1) ? 1
+                            : (ct.colorCount > CUSTOM_THEME_MAX_COLORS) ? CUSTOM_THEME_MAX_COLORS
+                            : ct.colorCount;
+    for (uint8_t ci = 0; ci < g_customThemeColorCount; ci++) {
+        uint32_t c = ct.colors[ci];
+        g_customThemeColors[ci] = strip.Color((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+    }
+    // g_successAnimationColor holds the primary for backward compat with renderCometPulse.
+    startScanAnimation(ANIMATION_STYLE_CUSTOM, g_customThemeColors[0]);
 }
 
 static void startDefaultBandChimeSequence() {
@@ -322,10 +579,29 @@ void handleSuccess(uint32_t color, uint16_t themeId) {
     if(isSuccessActive) return;
 
     if (themeId == 7) {
-        Play_Music_theme(themeId);
-        startScanAnimation(ANIMATION_STYLE_SPOOKY, color);
-        Serial.println("Theme-specific success animation started; running until audio playback ends.");
+        startScanAnimation(ANIMATION_STYLE_BOO, color);
+        Serial.println("Boo To You animation started.");
         return;
+    }
+
+    if (themeId >= CUSTOM_THEME_ID_BASE) {
+        int cidx = findCustomTheme(themeId);
+        if (cidx >= 0) {
+            if (strlen(customThemes[cidx].audioFile) > 0) {
+                char path[72];
+                snprintf(path, sizeof(path), "/%s", customThemes[cidx].audioFile);
+                if (!Play_Music_file(path)) {
+                    // SD file missing or card absent — fall back to default chime (LittleFS if needed)
+                    Play_Default_Band_Chime();
+                }
+            } else {
+                Play_Default_Band_Chime();
+            }
+            startCustomThemeAnimation(customThemes[cidx]);
+            Serial.printf("Custom theme '%s' (id=%u) animation started.\n",
+                          customThemes[cidx].name, themeId);
+            return;
+        }
     }
 
     startDefaultBandChimeSequence();
@@ -364,6 +640,7 @@ void setup() {
     int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 50) ? 0 : rc;
     for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
     prefs.end();
+    loadCustomThemesFromPrefs();
     
     if(nfc.begin()) nfc.SAMConfig();
 

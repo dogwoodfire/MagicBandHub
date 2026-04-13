@@ -16,6 +16,7 @@ void Audio_Loop();
 void Play_Music_test();
 bool Play_Music_file(const char* path);
 bool Play_Default_Band_Chime();
+bool Play_Fallback_Chime();
 bool Play_Music_theme(uint16_t themeId);
 void Music_pause(); 
 void Music_resume();
