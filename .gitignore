@@ -3,3 +3,10 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Working media assets (not part of firmware source)
+workingmedia/
