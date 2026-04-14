@@ -64,6 +64,27 @@ uint8_t  g_customThemeColorCount = 0;
 uint8_t  g_customThemePhases = 0;   // bitmask of CTP_PHASE_*
 uint8_t  g_customThemeLoop = 0;     // CustomThemeLoop value
 
+// ---- Music Player state (struct PlayerTrack defined in web_portal.h) ----
+PlayerTrack g_playlist[64];
+int         g_playlistCount = 0;
+int         g_playerIndex   = -1; // currently playing index
+bool        g_playerActive  = false;
+bool        g_playerPaused  = false;
+
+// Lightshow mode: 0=off 1=rainbow 2=pulse 3=colour-cycle
+uint8_t g_playerLightshow = 0;
+// Lightshow speed: 0=sedate 1=medium 2=lively
+uint8_t g_playerLsSpeed = 0;
+// Repeat / loop playlist
+bool    g_playerRepeat    = true;
+bool    g_playerRepeatOne = false; // repeat current track instead of advancing
+// Player lightshow colour override (set when a theme with lsUseThemeColors plays)
+bool     g_playerLsUseThemeColors = false;
+uint32_t g_playerLsThemeColors[5] = {0};
+uint8_t  g_playerLsThemeColorCount = 0;
+static uint32_t g_playerLsFrame = 0;
+static uint8_t  g_playerLsStep  = 0;
+
 static void audioFriendlyDelay(uint32_t ms) {
     const uint32_t start = millis();
     while (millis() - start < ms) {
@@ -379,6 +400,14 @@ static void updateSuccessAnimation() {
             return;
         }
 
+        // Player-lightshow modes (4+): once the opening phases complete, hand off.
+        // g_playerLightshow was already set in startCustomThemeAnimation(); the player
+        // renderer will take over since g_playerActive is true and isSuccessActive will be false.
+        if (g_customThemeLoop >= CTL_LS_RAINBOW) {
+            stopSuccessAnimation();
+            return;
+        }
+
         if (g_customThemeLoop == CTL_GENTLE_PULSE) {
             if (now - g_successAnimationLastFrame >= 16) {
                 g_successAnimationLastFrame = now;
@@ -466,6 +495,18 @@ static void startCustomThemeAnimation(const CustomTheme& ct) {
     }
     // g_successAnimationColor holds the primary for backward compat with renderCometPulse.
     startScanAnimation(ANIMATION_STYLE_CUSTOM, g_customThemeColors[0]);
+
+    // For player-lightshow loop modes (4+): pre-arm the lightshow and colour override.
+    // The loop phase will call stopSuccessAnimation() and hand off to the player renderer.
+    if (ct.loopPattern >= CTL_LS_RAINBOW) {
+        g_playerLightshow = ct.loopPattern - 3; // maps 4→1, 5→2, … 13→10
+    }
+    // Colour override — copy theme palette so the player lightshow can use it
+    g_playerLsUseThemeColors  = (ct.lsUseThemeColors != 0);
+    g_playerLsThemeColorCount = g_customThemeColorCount;
+    for (uint8_t ci = 0; ci < g_customThemeColorCount; ci++) {
+        g_playerLsThemeColors[ci] = g_customThemeColors[ci];
+    }
 }
 
 static void startDefaultBandChimeSequence() {
@@ -599,7 +640,16 @@ void handleSuccess(uint32_t color, uint16_t themeId) {
             if (strlen(customThemes[cidx].audioFile) > 0) {
                 char path[72];
                 snprintf(path, sizeof(path), "/%s", customThemes[cidx].audioFile);
-                if (!Play_Music_file(path)) {
+                bool played = Play_Music_file(path);
+                if (played) {
+                    // Sync player state so the /player page reflects this track
+                    strncpy(g_playlist[0].name, customThemes[cidx].audioFile, sizeof(g_playlist[0].name) - 1);
+                    g_playlistCount = 1;
+                    g_playerIndex   = 0;
+                    g_playerActive  = true;
+                    g_playerPaused  = false;
+                    g_playerRepeat  = false; // play once (user can toggle on /player)
+                } else {
                     // SD file missing or card absent — fall back to default chime (LittleFS if needed)
                     Play_Default_Band_Chime();
                 }
@@ -724,6 +774,219 @@ void loop() {
             static uint8_t pos = 0; strip.clear();
             strip.setPixelColor(pos, strip.Color(200, 200, 200)); strip.show();
             pos = (pos + 1) % LED_COUNT;
+        }
+    }
+
+    // ---- Player lightshow (only when player is active and no band animation running) ----
+    if (g_playerActive && !g_playerPaused && !isSuccessActive && !g_webScanArmed && g_playerLightshow > 0) {
+        uint32_t now = millis();
+        static const uint32_t kLsInterval[] = {200, 75, 25}; // sedate/medium/lively (ms between frames)
+        uint8_t spd = g_playerLsSpeed < 3 ? g_playerLsSpeed : 1;
+        if (now - g_playerLsFrame > kLsInterval[spd]) {
+            g_playerLsFrame = now;
+            g_playerLsStep++;
+            if (g_playerLightshow == 1) {
+                // Rainbow spin — by definition uses full spectrum, theme colours not applied
+                strip.setBrightness(80);
+                for (int i = 0; i < LED_COUNT; i++) {
+                    uint16_t hue = ((uint32_t)g_playerLsStep * 65536 / LED_COUNT + (uint32_t)i * 65536 / LED_COUNT) & 0xFFFF;
+                    strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(hue, 255, 200)));
+                }
+                strip.show();
+            } else if (g_playerLightshow == 2) {
+                // Gentle pulse
+                static const uint32_t kPulsePeriod[] = {6000, 3000, 1500};
+                float t = (float)(now % kPulsePeriod[spd]) / (float)kPulsePeriod[spd];
+                uint8_t b = (uint8_t)(40.0f + 70.0f * sinf(t * 6.2832f));
+                strip.setBrightness(b);
+                uint32_t pulseCol = (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0)
+                    ? g_playerLsThemeColors[0] : strip.Color(255, 255, 255);
+                strip.fill(pulseCol);
+                strip.show();
+            } else if (g_playerLightshow == 3) {
+                // Colour cycle
+                uint8_t palSize;
+                const uint32_t* pal;
+                static const uint32_t kCols[] = {0xFF0000, 0xFF8800, 0xFFFF00, 0x00FF00, 0x0000FF, 0xAA00FF};
+                if (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0) {
+                    pal = g_playerLsThemeColors; palSize = g_playerLsThemeColorCount;
+                } else {
+                    pal = kCols; palSize = 6;
+                }
+                uint8_t ci = (g_playerLsStep / 32) % palSize;
+                uint32_t c = pal[ci];
+                float t2 = (float)(g_playerLsStep % 32) / 32.0f;
+                uint8_t b2 = (uint8_t)(80.0f + 96.0f * sinf(t2 * 3.1416f));
+                strip.setBrightness(b2);
+                strip.fill(c);
+                strip.show();
+            } else if (g_playerLightshow == 4) {
+                // Main Street USA — warm golden twinkle; theme override uses primary color
+                strip.setBrightness(90);
+                uint32_t baseCol = (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0)
+                    ? g_playerLsThemeColors[0] : strip.Color(255, 160, 20);
+                uint8_t br4 = (baseCol >> 16) & 0xFF, bg4 = (baseCol >> 8) & 0xFF, bb4 = baseCol & 0xFF;
+                for (int i = 0; i < LED_COUNT; i++) {
+                    uint8_t phase = (uint8_t)((g_playerLsStep + i * 7) & 0xFF);
+                    uint8_t bright = (uint8_t)(80 + 70 * sinf(phase * 0.02454f));
+                    strip.setPixelColor(i, strip.Color(
+                        (bright * br4) / 200, (bright * bg4) / 200, (bright * bb4) / 200));
+                }
+                strip.show();
+            } else if (g_playerLightshow == 5) {
+                // Adventureland — comet; theme override swaps palette
+                static const uint32_t kAdv[] = {0x00AA22, 0x007700, 0xFF6600, 0xCC4400, 0x004400};
+                uint8_t palSize5 = 5;
+                const uint32_t* pal5 = kAdv;
+                if (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0) {
+                    pal5 = g_playerLsThemeColors; palSize5 = g_playerLsThemeColorCount;
+                }
+                uint8_t head = g_playerLsStep % LED_COUNT;
+                strip.setBrightness(100);
+                strip.clear();
+                for (int t = 0; t < 5; t++) {
+                    int idx = (head + LED_COUNT - t) % LED_COUNT;
+                    uint32_t c5 = pal5[t % palSize5];
+                    uint8_t r5 = ((c5>>16)&0xFF) >> (t/2);
+                    uint8_t g5 = ((c5>>8)&0xFF)  >> (t/2);
+                    uint8_t b5 = (c5&0xFF)        >> (t/2);
+                    strip.setPixelColor(idx, strip.Color(r5,g5,b5));
+                }
+                strip.show();
+            } else if (g_playerLightshow == 6) {
+                // Frontierland — flicker; theme override uses primary colour
+                strip.setBrightness(110);
+                uint32_t baseCol6 = (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0)
+                    ? g_playerLsThemeColors[0] : strip.Color(255, 50, 0);
+                uint8_t br6 = (baseCol6 >> 16) & 0xFF, bg6 = (baseCol6 >> 8) & 0xFF, bb6 = baseCol6 & 0xFF;
+                for (int i = 0; i < LED_COUNT; i++) {
+                    uint8_t fl = (uint8_t)(100 + 80 * sinf((g_playerLsStep + i * 13) * 0.031f)
+                                               + 40 * sinf((g_playerLsStep + i * 5)  * 0.071f));
+                    strip.setPixelColor(i, strip.Color(
+                        (fl * br6) / 255, (fl * bg6) / 255, (fl * bb6) / 255));
+                }
+                strip.show();
+            } else if (g_playerLightshow == 7) {
+                // Liberty Square — ripple; theme override replaces palette
+                static const uint32_t kLib[] = {0xFF0000, 0xFFFFFF, 0x0000CC};
+                const uint32_t* pal7 = kLib; uint8_t palSize7 = 3;
+                if (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0) {
+                    pal7 = g_playerLsThemeColors; palSize7 = g_playerLsThemeColorCount;
+                }
+                strip.setBrightness(90);
+                for (int i = 0; i < LED_COUNT; i++) {
+                    uint8_t ci7 = ((i + (g_playerLsStep / 8)) / 2) % palSize7;
+                    strip.setPixelColor(i, pal7[ci7]);
+                }
+                strip.show();
+            } else if (g_playerLightshow == 8) {
+                // Fantasyland — pastel HSV spin; theme override shifts hue center to match color[0]
+                strip.setBrightness(80);
+                uint16_t hueCenter8 = 46500; // default pink-purple
+                if (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0) {
+                    // Approximate hue from NeoPixel color
+                    uint8_t tr = (g_playerLsThemeColors[0] >> 16) & 0xFF;
+                    uint8_t tg = (g_playerLsThemeColors[0] >>  8) & 0xFF;
+                    uint8_t tb =  g_playerLsThemeColors[0]        & 0xFF;
+                    // Quick dominant-channel hue estimate (0..65535)
+                    if (tr >= tg && tr >= tb)      hueCenter8 = (uint16_t)(((long)tg - tb) * 65536 / (6 * (tr - (tg < tb ? tg : tb) + 1)) + 65536) % 65536;
+                    else if (tg >= tr && tg >= tb) hueCenter8 = (uint16_t)(21845 + (long)(tb - tr) * 65536 / (6 * (tg - (tr < tb ? tr : tb) + 1)));
+                    else                           hueCenter8 = (uint16_t)(43690 + (long)(tr - tg) * 65536 / (6 * (tb - (tr < tg ? tr : tg) + 1)));
+                }
+                for (int i = 0; i < LED_COUNT; i++) {
+                    uint16_t hue8 = (uint16_t)(((uint32_t)g_playerLsStep * 320 + i * 4000) & 0xFFFF);
+                    uint16_t h8 = (uint16_t)(hueCenter8 + (hue8 % 11000) - 5500) & 0xFFFF;
+                    strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(h8, 180, 220)));
+                }
+                strip.show();
+            } else if (g_playerLightshow == 9) {
+                // Tomorrowland — electric spin
+                strip.setBrightness(110);
+                for (int i = 0; i < LED_COUNT; i++) {
+                    uint16_t hue9 = (uint16_t)(((uint32_t)g_playerLsStep * 800 + (uint32_t)i * 65536 / LED_COUNT) & 0xFFFF);
+                    uint16_t h9 = 40000 + (hue9 % 12000);
+                    uint8_t sat9 = (i % 4 == 0) ? 60 : 255;
+                    strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(h9, sat9, 230)));
+                }
+                strip.show();
+            } else if (g_playerLightshow == 10) {
+                // Haunted Mansion — ghost comet; theme override changes ghost colour
+                strip.setBrightness(60);
+                uint8_t ghostR = 20, ghostG = 180, ghostB = 40; // default sickly green
+                if (g_playerLsUseThemeColors && g_playerLsThemeColorCount > 0) {
+                    uint32_t gc = g_playerLsThemeColors[0];
+                    ghostR = (gc >> 16) & 0xFF; ghostG = (gc >> 8) & 0xFF; ghostB = gc & 0xFF;
+                }
+                uint8_t head10 = (g_playerLsStep / 2) % LED_COUNT;
+                for (int i = 0; i < LED_COUNT; i++) {
+                    uint8_t base_r = 20, base_g = 0, base_b = 18;
+                    int dist = (i - head10 + LED_COUNT) % LED_COUNT;
+                    if (dist < 6) {
+                        uint8_t fade10 = (uint8_t)(180 >> (dist / 1));
+                        base_r = (uint8_t)((uint32_t)fade10 * ghostR / 180);
+                        base_g = (uint8_t)((uint32_t)fade10 * ghostG / 180);
+                        base_b = (uint8_t)((uint32_t)fade10 * ghostB / 180);
+                    }
+                    if ((g_playerLsStep & 7) == 0 && (i * 17 + g_playerLsStep) % 11 == 0) {
+                        base_r = 80; base_g = 80; base_b = 100;
+                    }
+                    strip.setPixelColor(i, strip.Color(base_r, base_g, base_b));
+                }
+                strip.show();
+            }
+        }
+    } else if (!g_playerActive && g_playerLightshow > 0) {
+        // Player stopped — clear LEDs once
+        static bool lsClearedOnStop = false;
+        if (!lsClearedOnStop && !isSuccessActive) {
+            strip.clear(); strip.show();
+            lsClearedOnStop = true;
+        }
+        if (g_playerActive) lsClearedOnStop = false; // reset for next play
+    } else {
+        // Reset clear-flag whenever player becomes active again
+        static bool _lsActive = false;
+        if (g_playerActive && !_lsActive) { _lsActive = true; }
+        if (!g_playerActive) { _lsActive = false; }
+    }
+
+    // Auto-advance to next track.
+    // Debounce: wait 500ms after isRunning() first goes false before starting the next
+    // track. The audio library's internal I2S/DMA teardown is asynchronous; calling
+    // connecttoFS() immediately after isRunning() becomes false causes a LoadProhibited
+    // crash because internal tasks are still reading the old buffer pointers.
+    {
+        static uint32_t trackEndedAt = 0;
+        const bool trackDone = g_playerActive && !g_playerPaused
+                               && !audio.isRunning() && g_playlistCount > 0
+                               && g_playerMuteUntil == 0;
+        if (!trackDone) {
+            trackEndedAt = 0; // reset while playing / inactive
+        } else {
+            if (trackEndedAt == 0) {
+                trackEndedAt = millis(); // note when it ended — start debounce
+            } else if (millis() - trackEndedAt >= 500) {
+                trackEndedAt = 0;
+                int next;
+                if (g_playerRepeatOne) {
+                    next = g_playerIndex; // replay same track
+                } else {
+                    next = g_playerIndex + 1;
+                    if (next >= g_playlistCount) {
+                        if (g_playerRepeat) {
+                            next = 0;
+                        } else {
+                            g_playerActive = false;
+                            if (g_playerLightshow > 0) { strip.clear(); strip.show(); }
+                            goto skipAutoAdvance;
+                        }
+                    }
+                }
+                g_playerIndex = next;
+                { char path[80]; snprintf(path, sizeof(path), "/%s", g_playlist[g_playerIndex].name);
+                  if (!Play_Music_file(path)) { g_playerActive = false; } }
+                skipAutoAdvance:;
+            }
         }
     }
 

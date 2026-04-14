@@ -26,3 +26,4 @@ void Music_stop();
 void Music_set_volume(uint8_t vol); // 0-21
 void Play_Raw_Hardware_Test();
 extern uint8_t g_volume;
+extern volatile uint32_t g_playerMuteUntil; // set by Audio_ConnectToFS, cleared by Audio_Loop

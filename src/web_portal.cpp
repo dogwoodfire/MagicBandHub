@@ -5,6 +5,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "web_portal.h"
+#include "Audio_ES8311.h"
 #include <WiFi.h>
 #include <Preferences.h>
 #include <ESPmDNS.h>
@@ -29,6 +30,8 @@ extern Preferences prefs;
 // Access the timeout variables from main.cpp
 extern uint32_t idleTimeout;
 extern uint32_t sleepTimeout;
+
+// Player state (defined in main.cpp) — struct and externs are in web_portal.h
 
 extern "C" void fn_refresh_roller(lv_event_t * e);
 extern "C" void formatUidString(const uint8_t* uid, size_t len, char* out, size_t outSize);
@@ -646,6 +649,16 @@ static const char* customThemeLoopName(uint8_t p) {
         case CTL_SPINNING_COMET: return "Spinning Comet";
         case CTL_GENTLE_PULSE:   return "Gentle Pulse";
         case CTL_RAINBOW_SPIN:   return "Rainbow Spin";
+        case CTL_LS_RAINBOW:     return "🌈 Rainbow";
+        case CTL_LS_PULSE:       return "✨ Pulse";
+        case CTL_LS_COLOUR_CYCLE:return "🎠 Colour Cycle";
+        case CTL_LS_MAIN_STREET: return "🏠 Main Street";
+        case CTL_LS_ADVENTURE:   return "🌿 Adventureland";
+        case CTL_LS_FRONTIER:    return "🔥 Frontierland";
+        case CTL_LS_LIBERTY:     return "🇬🇧 Liberty Square";
+        case CTL_LS_FANTASY:     return "🦄 Fantasyland";
+        case CTL_LS_TOMORROW:    return "🚀 Tomorrowland";
+        case CTL_LS_HAUNTED:     return "👻 Haunted Mansion";
     }
     return "Unknown";
 }
@@ -854,6 +867,50 @@ void initWebServer() {
             html += "<input type='submit' class='btn-save' value='Save & Restart'></form></div>";
         } else {
             html += "<h1>MagicBand Hub</h1>";
+
+            // Now-playing mini-bar (always visible)
+            html += "<div id='miniPlayer' style='background:#ffffffcc;border-radius:14px;padding:10px 14px;margin-bottom:8px;box-shadow:0 2px 8px rgba(0,0,0,0.12);'>";
+            html += "  <div style='display:flex;flex-direction:column;gap:6px;'>";
+            // Row 1: icon + track name (wraps freely)
+            html += "    <div style='display:flex;align-items:center;gap:8px;'>";
+            html += "      <span style='font-size:1.2em;flex-shrink:0;'>&#127925;</span>";
+            html += "      <span id='mpTrack' style='font-weight:700;color:#1a237e;font-size:0.9em;word-break:break-word;line-height:1.3;'>Nothing playing</span>";
+            html += "    </div>";
+            // Row 2: controls + link (hidden until playing)
+            html += "    <div style='display:flex;align-items:center;gap:6px;flex-wrap:wrap;'>";
+            html += "      <div id='mpControls' style='display:none;gap:6px;align-items:center;'>";
+            html += "        <button id='mpPlayPause' onclick='mpToggle()' style='background:#5765f2;color:#fff;border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:0.85em;font-weight:700;'>&#9646;&#9646; Pause</button>";
+            html += "        <button onclick='mpStop()' style='background:#ff4757;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:0.85em;font-weight:700;'>&#9632;</button>";
+            html += "      </div>";
+            html += "      <a href='/player' style='background:#f0f2ff;color:#3b4ce2;border:1.5px solid #c5caf5;border-radius:8px;padding:6px 10px;text-decoration:none;font-size:0.82em;font-weight:700;white-space:nowrap;'>Music Player &#8594;</a>";
+            html += "    </div>";
+            html += "  </div>";
+            html += "</div>";
+            html += "<script>";
+            html += "var __mpPoll=null;";
+            // Cancel the poll, do the action, update from the response, then restart poll.
+            // This prevents a stale poll response from overwriting the action response.
+            html += "function mpAction(url){ clearInterval(__mpPoll); __mpPoll=null; fetch(url).then(r=>r.json()).then(function(d){ mpUpdateBar(d); __mpPoll=setInterval(mpPoll,3000); }).catch(function(){ __mpPoll=setInterval(mpPoll,3000); }); }";
+            html += "function mpToggle(){ mpAction('/player_pause'); }";
+            html += "function mpStop(){ mpAction('/player_stop'); }";
+            html += "function mpUpdateBar(d){";
+            html += "  if(!d) return;";
+            html += "  var trk=document.getElementById('mpTrack');";
+            html += "  var btn=document.getElementById('mpPlayPause');";
+            html += "  var ctrl=document.getElementById('mpControls');";
+            html += "  if(d.playing){";
+            html += "    if(trk) trk.textContent=d.track||'Now playing';";
+            html += "    if(btn) btn.innerHTML=d.paused?'&#9654; Resume':'&#9646;&#9646; Pause';";
+            html += "    if(ctrl) ctrl.style.display='flex';";
+            html += "  } else {";
+            html += "    if(trk) trk.textContent='Nothing playing';";
+            html += "    if(ctrl) ctrl.style.display='none';";
+            html += "  }";
+            html += "}";
+            html += "function mpPoll(){ fetch('/player_status').then(r=>r.json()).then(mpUpdateBar).catch(function(){}); }";
+            html += "mpPoll();";
+            html += "__mpPoll=setInterval(mpPoll,3000);";
+            html += "</script>";
 
             // SCREEN-LESS REGISTER / SCAN CARD
             html += "<div class='card' id='scanCard' style='text-align:left;'>";
@@ -1649,7 +1706,8 @@ void initWebServer() {
                 json += String((unsigned int)customThemes[i].colors[ci]);
             }
             json += "],";
-            json += "\"audioFile\":\"" + jsonEscape(String(customThemes[i].audioFile)) + "\"";
+            json += "\"audioFile\":\"" + jsonEscape(String(customThemes[i].audioFile)) + "\",";
+            json += "\"lsUseColors\":" + String((unsigned int)customThemes[i].lsUseThemeColors);
             json += "}";
         }
         json += "]";  // closes customThemes"
@@ -1862,6 +1920,7 @@ void initWebServer() {
                         if (jsonFindValueString(cobj, "name", sv)) strncpy(ct.name, sv.c_str(), sizeof(ct.name) - 1);
                         int pv = 0; jsonFindValueInt(cobj, "phases", pv); ct.phases = (uint8_t)pv;
                         int lv = 0; jsonFindValueInt(cobj, "loop",   lv); ct.loopPattern = (uint8_t)lv;
+                        int ucv = 0; jsonFindValueInt(cobj, "lsUseColors", ucv); ct.lsUseThemeColors = (uint8_t)ucv;
                         // Parse colors array
                         {
                             int cArr = cobj.indexOf("\"colors\":");
@@ -2179,11 +2238,31 @@ void initWebServer() {
             // ---- Loop pattern dropdown ----
             uint8_t defLoop = isEdit ? customThemes[editIdx].loopPattern : CTL_SPINNING_COMET;
             html += "<div class='field'><label>Ongoing LED Pattern</label><select name='loop'>";
-            const char* loopNames[CUSTOM_THEME_LOOP_COUNT] = {"None (stop after opening)", "Spinning Comet", "Gentle Pulse", "Rainbow Spin"};
-            for (uint8_t lp = 0; lp < CUSTOM_THEME_LOOP_COUNT; lp++) {
+            const char* loopNames[CUSTOM_THEME_LOOP_COUNT] = {
+                "None (stop after opening)", "Spinning Comet", "Gentle Pulse", "Rainbow Spin",
+                "🌈 Rainbow", "✨ Pulse", "🎠 Colour Cycle",
+                "🏠 Main Street", "🌿 Adventureland", "🔥 Frontierland",
+                "Liberty Square", "🦄 Fantasyland", "🚀 Tomorrowland", "👻 Haunted Mansion"
+            };
+            // Group: classic modes
+            html += "<optgroup label='Classic'>";
+            for (uint8_t lp = 0; lp < 4; lp++)
                 html += "<option value='" + String(lp) + "'" + String(defLoop == lp ? " selected" : "") + ">" + String(loopNames[lp]) + "</option>";
-            }
+            html += "</optgroup>";
+            // Group: player lightshow modes
+            html += "<optgroup label='Lightshow Modes'>";
+            for (uint8_t lp = 4; lp < CUSTOM_THEME_LOOP_COUNT; lp++)
+                html += "<option value='" + String(lp) + "'" + String(defLoop == lp ? " selected" : "") + ">" + String(loopNames[lp]) + "</option>";
+            html += "</optgroup>";
             html += "</select></div>";
+
+            // ---- Colour override toggle (only meaningful for lightshow modes) ----
+            bool defUseColors = isEdit ? (customThemes[editIdx].lsUseThemeColors != 0) : false;
+            html += "<div class='field' id='lsColorRow'>";
+            html += "<label style='display:flex;align-items:center;gap:10px;cursor:pointer;'>";
+            html += "<input type='checkbox' name='lsUseThemeColors' value='1'" + String(defUseColors ? " checked" : "") + " id='ckLsColors'> ";
+            html += "<span>Use theme colours in lightshow <span style='font-size:0.8em;color:#888;'>(replaces lightshow's default palette)</span></span>";
+            html += "</label></div>";
 
             // ---- Colours ----
             html += "<div class='field'><label>Colours (first is required)</label>";
@@ -2274,6 +2353,9 @@ void initWebServer() {
             ? (uint8_t)constrain(request->getParam("loop")->value().toInt(), 0, CUSTOM_THEME_LOOP_COUNT - 1)
             : CTL_SPINNING_COMET;
 
+        ct.lsUseThemeColors = (request->hasParam("lsUseThemeColors") &&
+                                request->getParam("lsUseThemeColors")->value() == "1") ? 1 : 0;
+
         // Parse up to 5 colours submitted as hc0..hc4
         ct.colorCount = 0;
         int reqColorCount = request->hasParam("colorCount")
@@ -2348,6 +2430,385 @@ void initWebServer() {
         prefs.end();
 
         request->redirect("/themes");
+    });
+
+    // =========================================================================
+    // MUSIC PLAYER
+    // =========================================================================
+
+    // Helper: rebuild playlist from SD
+    // (called by player_play on first load and by upload completion)
+    // Declared as a lambda we can invoke inside multiple handlers.
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player — full music player page
+    // -------------------------------------------------------------------------
+    server.on("/player", HTTP_GET, [](AsyncWebServerRequest *request){
+        String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
+        html += "<title>MagicBand Hub &mdash; Player</title><style>";
+        html += "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(160deg,#1a237e 0%,#1565c0 60%,#0288d1 100%);min-height:100vh;padding:20px;margin:0;color:#fff;}";
+        html += "h1{font-weight:900;margin:10px 0 4px 0;letter-spacing:-0.5px;text-shadow:0 2px 8px rgba(0,0,0,0.25);}";
+        html += ".card{background:#fff;border-radius:18px;padding:18px;margin:12px auto;max-width:100%;box-shadow:0 4px 20px rgba(10,30,90,0.18);color:#1a237e;}";
+        html += ".container{max-width:600px;margin:0 auto;}";
+        html += "button,a.btn{display:inline-block;border:none;border-radius:10px;padding:10px 18px;font-size:0.95em;font-weight:700;cursor:pointer;text-decoration:none;}";
+        html += ".btn-primary{background:#5765f2;color:#fff;} .btn-primary:hover{background:#3d4fd6;}";
+        html += ".btn-secondary{background:#e8eaff;color:#1a237e;} .btn-secondary:hover{background:#c5caff;}";
+        html += ".btn-sm{padding:7px 13px;font-size:0.82em;}";
+        html += ".btn-danger{background:#ffebee;color:#c62828;} .btn-danger:hover{background:#ffcdd2;}";
+        html += ".track-list{list-style:none;padding:0;margin:0;}";
+        html += ".track-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;cursor:pointer;transition:background 0.15s;font-size:0.93em;}";
+        html += ".track-item:hover{background:#f0f4ff;} .track-item.active{background:#e8eaff;font-weight:700;}";
+        html += ".track-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}";
+        html += ".player-bar{display:flex;align-items:center;justify-content:center;gap:12px;margin:16px 0;}";
+        html += ".vol-row{display:flex;align-items:center;gap:10px;margin-top:10px;}";
+        html += "input[type=range]{flex:1;accent-color:#5765f2;}";
+        html += ".now-playing{font-size:1em;font-weight:800;color:#1a237e;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}";
+        html += ".status-bar{font-size:0.8em;color:#888;margin-top:4px;}";
+        html += ".ls-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}";
+        html += ".ls-btn{background:#f0f4ff;border:2px solid transparent;border-radius:10px;padding:8px 12px;font-size:0.82em;font-weight:600;cursor:pointer;color:#1a237e;transition:all 0.15s;}";
+        html += ".ls-btn.active{border-color:#5765f2;background:#e8eaff;}";
+        html += ".upload-area{margin-top:12px;} .upload-area input[type=file]{width:100%;}";
+        html += ".progress-wrap{height:6px;background:#e0e4ff;border-radius:3px;margin:10px 0;overflow:hidden;}";
+        html += ".progress-bar{height:100%;background:#5765f2;border-radius:3px;width:0;transition:width 0.4s;}";
+        html += "a.back{color:#ffffffcc;text-decoration:none;font-size:0.9em;display:inline-block;margin-bottom:10px;} a.back:hover{color:#fff;}";
+        html += "</style></head><body><div class='container'>";
+        html += "<a class='back' href='/'>&#8592; Back to Hub</a>";
+        html += "<h1>&#127925; Music Player</h1>";
+
+        // Now-playing card
+        html += "<div class='card'>";
+        html += "<div class='now-playing' id='nowPlaying'>Not playing</div>";
+        html += "<div class='status-bar' id='statusBar'>Select a track or press Play</div>";
+        html += "<div class='progress-wrap'><div class='progress-bar' id='progressBar'></div></div>";
+        html += "<div class='player-bar'>";
+        html += "<button class='btn btn-secondary btn-sm' onclick='doPrev()'>&#9664;&#9664;</button>";
+        html += "<button class='btn btn-primary' id='btnPlayPause' onclick='doPlayPause()'>&#9654; Play</button>";
+        html += "<button class='btn btn-secondary btn-sm' onclick='doNext()'>&#9654;&#9654;</button>";
+        html += "<button class='btn btn-danger btn-sm' onclick='doStop()'>&#9632; Stop</button>";
+        html += "</div>";
+        html += "<div class='vol-row'>";
+        html += "<span style='font-size:0.85em;color:#888;'>&#128266;</span>";
+        html += "<input type='range' id='volSlider' min='0' max='21' value='" + String((int)g_volume) + "' oninput='doVolume(this.value)' onchange='doVolume(this.value)'>";
+        html += "<span id='volLabel' style='font-size:0.85em;color:#888;width:28px;'>" + String((int)g_volume) + "</span>";
+        html += "</div>";
+        html += "<div style='display:flex;gap:8px;margin-top:10px;'>"; 
+        html += "<button class='ls-btn" + String(g_playerRepeatOne?" active":"") + "' id='btnRepeatOne' onclick='doRepeatOne()' title='Repeat current track'>&#128258; Repeat 1</button>";
+        html += "<button class='ls-btn" + String(g_playerRepeat?" active":"") + "' id='btnRepeat' onclick='doRepeat()' title='Loop through playlist'>&infin; Keep Playing</button>";
+        html += "</div></div>";
+
+        // Lightshow card
+        html += "<div class='card'>";
+        html += "<div style='font-weight:800;margin-bottom:10px;'>&#127811; LED Lightshow</div>";
+        html += "<div class='ls-row'>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==0?" active":"") + "' id='ls0' onclick='setLightshow(0)'>Off</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==1?" active":"") + "' id='ls1' onclick='setLightshow(1)'>&#127752; Rainbow</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==2?" active":"") + "' id='ls2' onclick='setLightshow(2)'>&#10024; Pulse</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==3?" active":"") + "' id='ls3' onclick='setLightshow(3)'>&#127894; Colour Cycle</button>";
+        html += "</div>";
+        html += "<div style='font-size:0.8em;color:#888;margin:10px 0 6px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;'>Magic Kingdom Lands</div>";
+        html += "<div class='ls-row'>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==4?" active":"") + "' id='ls4' onclick='setLightshow(4)'>&#127968; Main Street</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==5?" active":"") + "' id='ls5' onclick='setLightshow(5)'>&#127807; Adventureland</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==6?" active":"") + "' id='ls6' onclick='setLightshow(6)'>&#128293; Frontierland</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==7?" active":"") + "' id='ls7' onclick='setLightshow(7)'>&#127468;&#127463; Liberty Square</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==8?" active":"") + "' id='ls8' onclick='setLightshow(8)'>&#129984; Fantasyland</button>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==9?" active":"") + "' id='ls9' onclick='setLightshow(9)'>&#128640; Tomorrowland</button>";
+        html += "</div>";
+        html += "<div style='font-size:0.8em;color:#888;margin:10px 0 6px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;'>Special</div>";
+        html += "<div class='ls-row'>";
+        html += "<button class='ls-btn" + String(g_playerLightshow==10?" active":"") + "' id='ls10' onclick='setLightshow(10)'>&#128123; Haunted Mansion</button>";
+        html += "</div>"; // close special ls-row
+        html += "<div style='font-size:0.8em;color:#888;margin:10px 0 6px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;'>Speed</div>";
+        html += "<div class='ls-row'>";
+        html += "<button class='ls-btn" + String(g_playerLsSpeed==0?" active":"") + "' id='spd0' onclick='setSpeed(0)'>&#128034; Sedate</button>";
+        html += "<button class='ls-btn" + String(g_playerLsSpeed==1?" active":"") + "' id='spd1' onclick='setSpeed(1)'>Medium</button>";
+        html += "<button class='ls-btn" + String(g_playerLsSpeed==2?" active":"") + "' id='spd2' onclick='setSpeed(2)'>&#9889; Lively</button>";
+        html += "</div></div>"; // close speed row + card
+
+        // Track list card
+        html += "<div class='card'>";
+        html += "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;'>";
+        html += "<div style='font-weight:800;'>&#127916; Tracks on SD Card</div>";
+        html += "<button class='btn btn-secondary btn-sm' onclick='loadTrackList()'>&#8635; Refresh</button>";
+        html += "</div>";
+        html += "<ul class='track-list' id='trackList'><li style='color:#888;font-size:0.9em;'>Loading&hellip;</li></ul>";
+        html += "</div>";
+
+        // Upload card
+        html += "<div class='card'>";
+        html += "<div style='font-weight:800;margin-bottom:10px;'>&#128190; Upload Audio</div>";
+        html += "<div class='meta' style='color:#888;margin-bottom:10px;'>MP3, WAV, AAC or FLAC &mdash; saved to SD card</div>";
+        html += "<input type='file' id='upFile' accept='.mp3,.wav,.aac,.flac' multiple>";
+        html += "<div id='upStatus' style='margin-top:8px;font-size:0.85em;color:#888;'></div>";
+        html += "<button class='btn btn-primary' style='margin-top:10px;' onclick='doUpload()'>Upload</button>";
+        html += "</div>";
+
+        // JS
+        html += "<script>";
+        html += "var currentTrack=-1, isPlaying=false, statusPoll=null;";
+        html += "function loadTrackList(){";
+        html += "  fetch('/player_tracks').then(r=>r.json()).then(function(tr){";
+        html += "    var ul=document.getElementById('trackList'); ul.innerHTML='';";
+        html += "    if(!tr||!tr.length){ul.innerHTML='<li style=\"color:#888;font-size:0.9em;\">No audio files found on SD card</li>';return;}";
+        html += "    tr.forEach(function(t,i){";
+        html += "      var li=document.createElement('li'); li.className='track-item'+(i===currentTrack?' active':'');";
+        html += "      li.innerHTML='<span style=\"color:#5765f2;font-weight:700;min-width:22px;\">'+(i+1)+'</span><span class=\"track-name\">'+t+'</span><button class=\"btn btn-primary btn-sm\" onclick=\"playTrack('+i+');event.stopPropagation();\">&#9654;</button>';";
+        html += "      li.onclick=function(){playTrack(i);};";
+        html += "      ul.appendChild(li);";
+        html += "    });";
+        html += "  });";
+        html += "}";
+        html += "function playTrack(i){";
+        html += "  fetch('/player_play?idx='+i).then(r=>r.json()).then(function(d){if(d.ok)startPoll();});";
+        html += "}";
+        html += "function doPlayPause(){";
+        html += "  if(!isPlaying) playTrack(currentTrack>=0?currentTrack:0);";
+        html += "  else fetch('/player_pause').then(r=>r.json()).then(function(d){updateStatus(d);});";
+        html += "}";
+        html += "function doStop(){ fetch('/player_stop').then(r=>r.json()).then(function(d){updateStatus(d);stopPoll();}); }";
+        html += "function doRepeat(){ var cur=document.getElementById('btnRepeat'); var now=cur&&cur.classList.contains('active'); fetch('/player_repeat?r='+(now?0:1)).then(r=>r.json()).then(function(d){ if(cur) cur.classList.toggle('active',!!d.repeat); var r1=document.getElementById('btnRepeatOne'); if(r1&&d.repeat_one!=null) r1.classList.toggle('active',!!d.repeat_one); }); }";
+        html += "function doRepeatOne(){ var cur=document.getElementById('btnRepeatOne'); var now=cur&&cur.classList.contains('active'); fetch('/player_repeat_one?r='+(now?0:1)).then(r=>r.json()).then(function(d){ if(cur) cur.classList.toggle('active',!!d.repeat_one); var rb=document.getElementById('btnRepeat'); if(rb&&d.repeat!=null) rb.classList.toggle('active',!!d.repeat); }); }";
+        html += "function doPrev(){ fetch('/player_prev').then(r=>r.json()).then(function(d){if(d.ok)startPoll();}); }";
+        html += "function doNext(){ fetch('/player_next').then(r=>r.json()).then(function(d){if(d.ok)startPoll();}); }";
+        html += "function doVolume(v){ document.getElementById('volLabel').textContent=v; fetch('/player_volume?v='+v); }";
+        html += "function setLightshow(m){";
+        html += "  fetch('/player_lightshow?m='+m).then(r=>r.json()).then(function(){";
+        html += "    [0,1,2,3,4,5,6,7,8,9,10].forEach(function(i){ var b=document.getElementById('ls'+i); if(b) b.classList.toggle('active',i===m); });";
+        html += "  });";
+        html += "}";
+        html += "function setSpeed(s){ fetch('/player_speed?s='+s).then(r=>r.json()).then(function(){ [0,1,2].forEach(function(i){ var b=document.getElementById('spd'+i); if(b) b.classList.toggle('active',i===s); }); }); }";
+        html += "function updateStatus(d){";
+        html += "  if(!d) return;";
+        html += "  currentTrack=d.idx!=null?d.idx:-1;";
+        html += "  isPlaying=d.playing;";
+        html += "  var np=document.getElementById('nowPlaying');";
+        html += "  var sb=document.getElementById('statusBar');";
+        html += "  var pp=document.getElementById('btnPlayPause');";
+        html += "  if(np) np.textContent=d.track||'Not playing';";
+        html += "  if(sb) sb.textContent=d.playing?(d.paused?'Paused':'Playing'):'Stopped';";
+        html += "  if(pp) pp.innerHTML=d.paused?'&#9654; Resume':(d.playing?'&#9646;&#9646; Pause':'&#9654; Play');";
+        html += "  var tl=document.getElementById('trackList');";
+        html += "  if(tl){ Array.from(tl.children).forEach(function(li,i){ li.classList.toggle('active',i===currentTrack); }); }";
+        html += "  if(d.speed!=null){ [0,1,2].forEach(function(i){ var b=document.getElementById('spd'+i); if(b) b.classList.toggle('active',i===d.speed); }); }";
+        html += "  var rb=document.getElementById('btnRepeat'); if(rb&&d.repeat!=null) rb.classList.toggle('active',!!d.repeat);";        html += "  var r1=document.getElementById('btnRepeatOne'); if(r1&&d.repeat_one!=null) r1.classList.toggle('active',!!d.repeat_one);"
+;        html += "}";
+        html += "function startPoll(){ if(statusPoll) clearInterval(statusPoll); statusPoll=setInterval(pollStatus,2000); pollStatus(); }";
+        html += "function stopPoll(){ if(statusPoll){ clearInterval(statusPoll); statusPoll=null; } }";
+        html += "function pollStatus(){ fetch('/player_status').then(r=>r.json()).then(updateStatus).catch(function(){}); }";
+        html += "function doUpload(){";
+        html += "  var f=document.getElementById('upFile'); if(!f.files.length){alert('Select a file first');return;}";
+        html += "  var st=document.getElementById('upStatus');";
+        html += "  Array.from(f.files).forEach(function(file){";
+        html += "    var fd=new FormData(); fd.append('file',file,file.name);";
+        html += "    st.textContent='Uploading '+file.name+'...';";
+        html += "    fetch('/upload_audio',{method:'POST',body:fd}).then(r=>r.json()).then(function(d){";
+        html += "      st.textContent=d.ok?('Uploaded: '+d.name):'Upload failed';";
+        html += "      if(d.ok) loadTrackList();";
+        html += "    }).catch(function(){ st.textContent='Upload error'; });";
+        html += "  });";
+        html += "}";
+        html += "loadTrackList(); startPoll();";
+        html += "</script></div></body></html>";
+        request->send(200, "text/html", html);
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_tracks — JSON array of audio filenames on SD
+    // -------------------------------------------------------------------------
+    server.on("/player_tracks", HTTP_GET, [](AsyncWebServerRequest *request){
+        // Rebuild in-memory playlist and return as JSON
+        g_playlistCount = 0;
+        String json = "[";
+        bool first = true;
+        File root = SD_MMC.open("/");
+        if (root) {
+            File f = root.openNextFile();
+            while (f && g_playlistCount < 64) {
+                if (!f.isDirectory()) {
+                    String fname = String(f.name());
+                    int sl = fname.lastIndexOf('/');
+                    String base = (sl >= 0) ? fname.substring(sl + 1) : fname;
+                    if (base.startsWith("._")) { f = root.openNextFile(); continue; }
+                    String lower = base; lower.toLowerCase();
+                    if (lower.endsWith(".mp3") || lower.endsWith(".wav") ||
+                        lower.endsWith(".aac") || lower.endsWith(".flac")) {
+                        strncpy(g_playlist[g_playlistCount].name, base.c_str(), 63);
+                        g_playlist[g_playlistCount].name[63] = '\0';
+                        g_playlistCount++;
+                        if (!first) json += ",";
+                        first = false;
+                        json += "\"" + jsonEscape(base) + "\"";
+                    }
+                }
+                f = root.openNextFile();
+            }
+            root.close();
+        }
+        json += "]";
+        request->send(200, "application/json", json);
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_play?idx=N
+    // -------------------------------------------------------------------------
+    server.on("/player_play", HTTP_GET, [](AsyncWebServerRequest *request){
+        int idx = request->hasParam("idx") ? request->getParam("idx")->value().toInt() : 0;
+        if (g_playlistCount == 0) {
+            // Rebuild playlist first
+            g_playlistCount = 0;
+            File root = SD_MMC.open("/");
+            if (root) {
+                File f = root.openNextFile();
+                while (f && g_playlistCount < 64) {
+                    if (!f.isDirectory()) {
+                        String fname = String(f.name());
+                        int sl = fname.lastIndexOf('/');
+                        String base = (sl >= 0) ? fname.substring(sl + 1) : fname;
+                        if (base.startsWith("._")) { f = root.openNextFile(); continue; }
+                        String lower = base; lower.toLowerCase();
+                        if (lower.endsWith(".mp3") || lower.endsWith(".wav") ||
+                            lower.endsWith(".aac") || lower.endsWith(".flac")) {
+                            strncpy(g_playlist[g_playlistCount].name, base.c_str(), 63);
+                            g_playlist[g_playlistCount].name[63] = '\0';
+                            g_playlistCount++;
+                        }
+                    }
+                    f = root.openNextFile();
+                }
+                root.close();
+            }
+        }
+        if (idx < 0 || idx >= g_playlistCount) {
+            request->send(400, "application/json", "{\"ok\":false,\"error\":\"invalid index\"}");
+            return;
+        }
+        g_playerIndex = idx;
+        char path[80]; snprintf(path, sizeof(path), "/%s", g_playlist[g_playerIndex].name);
+        bool ok = Play_Music_file(path);
+        g_playerActive = ok;
+        g_playerPaused = false;
+        String resp = "{\"ok\":" + String(ok?"true":"false") + ",\"track\":\"" + jsonEscape(String(g_playlist[g_playerIndex].name)) + "\",\"idx\":" + String(g_playerIndex) + "}";
+        request->send(200, "application/json", resp);
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_pause — toggle pause
+    // -------------------------------------------------------------------------
+    server.on("/player_pause", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (g_playerActive) {
+            g_playerPaused = !g_playerPaused;
+            Music_pause(); // library uses pauseResume() toggle
+        }
+        String name = (g_playerIndex >= 0 && g_playerIndex < g_playlistCount) ? String(g_playlist[g_playerIndex].name) : "";
+        String resp = "{\"ok\":true,\"playing\":" + String(g_playerActive?"true":"false") + ",\"paused\":" + String(g_playerPaused?"true":"false") + ",\"track\":\"" + jsonEscape(name) + "\",\"idx\":" + String(g_playerIndex) + "}";
+        request->send(200, "application/json", resp);
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_stop
+    // -------------------------------------------------------------------------
+    server.on("/player_stop", HTTP_GET, [](AsyncWebServerRequest *request){
+        Music_stop();
+        g_playerActive = false;
+        g_playerPaused = false;
+        g_playerIndex  = -1;
+        request->send(200, "application/json", "{\"ok\":true,\"playing\":false,\"paused\":false,\"track\":\"\",\"idx\":-1}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_next
+    // -------------------------------------------------------------------------
+    server.on("/player_next", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (g_playlistCount == 0) { request->send(200, "application/json", "{\"ok\":false}"); return; }
+        g_playerIndex = (g_playerIndex + 1) % g_playlistCount;
+        char path[80]; snprintf(path, sizeof(path), "/%s", g_playlist[g_playerIndex].name);
+        bool ok = Play_Music_file(path);
+        g_playerActive = ok; g_playerPaused = false;
+        request->send(200, "application/json", "{\"ok\":" + String(ok?"true":"false") + ",\"idx\":" + String(g_playerIndex) + "}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_prev
+    // -------------------------------------------------------------------------
+    server.on("/player_prev", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (g_playlistCount == 0) { request->send(200, "application/json", "{\"ok\":false}"); return; }
+        g_playerIndex = (g_playerIndex - 1 + g_playlistCount) % g_playlistCount;
+        char path[80]; snprintf(path, sizeof(path), "/%s", g_playlist[g_playerIndex].name);
+        bool ok = Play_Music_file(path);
+        g_playerActive = ok; g_playerPaused = false;
+        request->send(200, "application/json", "{\"ok\":" + String(ok?"true":"false") + ",\"idx\":" + String(g_playerIndex) + "}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_volume?v=0-21
+    // -------------------------------------------------------------------------
+    server.on("/player_volume", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("v")) {
+            uint8_t v = (uint8_t)constrain(request->getParam("v")->value().toInt(), 0, 21);
+            Music_set_volume(v);
+        }
+        request->send(200, "application/json", "{\"ok\":true,\"vol\":" + String((int)g_volume) + "}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_lightshow?m=0-3
+    // -------------------------------------------------------------------------
+    server.on("/player_lightshow", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("m")) {
+            uint8_t m = (uint8_t)constrain(request->getParam("m")->value().toInt(), 0, 10);
+            g_playerLightshow = m;
+        }
+        request->send(200, "application/json", "{\"ok\":true,\"mode\":" + String((int)g_playerLightshow) + "}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_speed?s=0-2
+    // -------------------------------------------------------------------------
+    server.on("/player_speed", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("s")) {
+            g_playerLsSpeed = (uint8_t)constrain(request->getParam("s")->value().toInt(), 0, 2);
+        }
+        request->send(200, "application/json", "{\"ok\":true,\"speed\":" + String((int)g_playerLsSpeed) + "}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_repeat?r=0|1
+    // -------------------------------------------------------------------------
+    server.on("/player_repeat", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("r")) {
+            g_playerRepeat = request->getParam("r")->value().toInt() != 0;
+            if (g_playerRepeat) g_playerRepeatOne = false; // mutually exclusive
+        }
+        request->send(200, "application/json", "{\"ok\":true,\"repeat\":" + String(g_playerRepeat?"true":"false") + ",\"repeat_one\":" + String(g_playerRepeatOne?"true":"false") + "}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_repeat_one?r=0|1
+    // -------------------------------------------------------------------------
+    server.on("/player_repeat_one", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("r")) {
+            g_playerRepeatOne = request->getParam("r")->value().toInt() != 0;
+            if (g_playerRepeatOne) g_playerRepeat = false; // mutually exclusive
+        }
+        request->send(200, "application/json", "{\"ok\":true,\"repeat_one\":" + String(g_playerRepeatOne?"true":"false") + ",\"repeat\":" + String(g_playerRepeat?"true":"false") + "}");
+    });
+
+    // -------------------------------------------------------------------------
+    // ROUTE: /player_status — current play state
+    // -------------------------------------------------------------------------
+    server.on("/player_status", HTTP_GET, [](AsyncWebServerRequest *request){
+        String name = (g_playerIndex >= 0 && g_playerIndex < g_playlistCount) ? String(g_playlist[g_playerIndex].name) : "";
+        String resp = "{\"playing\":" + String(g_playerActive?"true":"false");
+        resp += ",\"paused\":"  + String(g_playerPaused?"true":"false");
+        resp += ",\"idx\":"     + String(g_playerIndex);
+        resp += ",\"track\":\"" + jsonEscape(name) + "\"";
+        resp += ",\"vol\":"     + String((int)g_volume);
+        resp += ",\"lightshow\":" + String((int)g_playerLightshow);
+        resp += ",\"speed\":"     + String((int)g_playerLsSpeed);
+        resp += ",\"repeat\":"      + String(g_playerRepeat?"true":"false");
+        resp += ",\"repeat_one\":" + String(g_playerRepeatOne?"true":"false");
+        resp += "}";
+        request->send(200, "application/json", resp);
     });
 }
 

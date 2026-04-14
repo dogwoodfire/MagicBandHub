@@ -53,22 +53,30 @@ static void writeES8311(uint8_t reg, uint8_t val) {
     Wire.endTransmission();
 }
 
+// Timed mute: set by Audio_ConnectToFS, cleared by Audio_Loop after DMA fills.
+// Using volatile because it is written from the web-server FreeRTOS task
+// and read from the main-loop task.
+volatile uint32_t g_playerMuteUntil = 0;
+
 void Audio_SetMute(bool mute) {
     uint8_t cur = readES8311(0x31);
     if (mute) cur |= 0x20; else cur &= ~0x20;
     writeES8311(0x31, cur);
 }
 
-// Mute codec, start decode pipeline, wait for DMA to prime, then unmute.
-// This eliminates the intermittent crackle caused by stale DMA buffer output
-// during the I2S pipeline restart that connecttoFS triggers.
+// Mute codec, start decode pipeline, then let Audio_Loop() (main task) handle the unmute
+// after the DMA buffers fill. NEVER call audio.loop() here — this function runs on the
+// AsyncWebServer FreeRTOS task; concurrent audio.loop() calls from two tasks corrupt
+// the MP3 decoder's internal state and cause an assert crash.
 bool Audio_ConnectToFS(fs::FS &fs, const char* path) {
     Audio_SetMute(true);
     bool ok = audio.connecttoFS(fs, path);
     if (ok) {
-        delay(80); // ~2 DMA buffer fills at 44100 Hz — enough for the decoder to prime
+        // Schedule unmute 150ms from now; Audio_Loop() will handle it from the safe task.
+        g_playerMuteUntil = millis() + 150;
+    } else {
+        Audio_SetMute(false);
     }
-    Audio_SetMute(false);
     return ok;
 }
 
@@ -420,6 +428,11 @@ void Music_set_volume(uint8_t vol) {
 }
 
 void Audio_Loop() {
+    // Timed unmute: once enough main-loop iterations have primed the DMA, lift the mute.
+    if (g_playerMuteUntil != 0 && millis() >= g_playerMuteUntil) {
+        Audio_SetMute(false);
+        g_playerMuteUntil = 0;
+    }
     audio.loop();
 }
 

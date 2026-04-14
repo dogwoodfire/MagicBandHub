@@ -15,8 +15,19 @@ enum CustomThemeLoop : uint8_t {
     CTL_SPINNING_COMET = 1,  // spinning comet until audio ends
     CTL_GENTLE_PULSE   = 2,  // slow sinusoidal pulse until audio ends
     CTL_RAINBOW_SPIN   = 3,  // cycles through band colours until audio ends
+    // Modes 4-13: mirrors g_playerLightshow values 1-10 (loopPattern - 3 = playerLightshow)
+    CTL_LS_RAINBOW     = 4,  // player lightshow: rainbow spin
+    CTL_LS_PULSE       = 5,  // player lightshow: gentle pulse
+    CTL_LS_COLOUR_CYCLE= 6,  // player lightshow: colour cycle
+    CTL_LS_MAIN_STREET = 7,  // player lightshow: Main Street USA
+    CTL_LS_ADVENTURE   = 8,  // player lightshow: Adventureland
+    CTL_LS_FRONTIER    = 9,  // player lightshow: Frontierland
+    CTL_LS_LIBERTY     = 10, // player lightshow: Liberty Square
+    CTL_LS_FANTASY     = 11, // player lightshow: Fantasyland
+    CTL_LS_TOMORROW    = 12, // player lightshow: Tomorrowland
+    CTL_LS_HAUNTED     = 13, // player lightshow: Haunted Mansion
 };
-#define CUSTOM_THEME_LOOP_COUNT 4
+#define CUSTOM_THEME_LOOP_COUNT 14
 
 #define CUSTOM_THEME_MAX_COLORS 5   // 1 required + up to 4 extra
 
@@ -32,6 +43,7 @@ struct CustomTheme {
     uint32_t colors[CUSTOM_THEME_MAX_COLORS]; // 0xRRGGBB; colors[0] required
     uint8_t  colorCount;                      // 1..CUSTOM_THEME_MAX_COLORS
     char     audioFile[64];                   // filename on SD root
+    uint8_t  lsUseThemeColors;               // 1 = lightshow uses this theme's colour palette
 };
 
 struct BandRecord {
@@ -64,6 +76,22 @@ int  findCustomTheme(uint16_t themeId); // returns index in customThemes[] or -1
 
 extern CustomTheme customThemes[];
 extern int customThemeCount;
+
+// ---- Music Player shared state ----
+struct PlayerTrack { char name[64]; };
+extern PlayerTrack g_playlist[];
+extern int         g_playlistCount;
+extern int         g_playerIndex;
+extern bool        g_playerActive;
+extern bool        g_playerPaused;
+extern uint8_t     g_playerLightshow;
+extern uint8_t     g_playerLsSpeed;
+extern bool        g_playerRepeat;
+extern bool        g_playerRepeatOne;
+// Colour override for player lightshow — set when a theme with lsUseThemeColors=1 triggers
+extern bool        g_playerLsUseThemeColors;
+extern uint32_t    g_playerLsThemeColors[5];  // NeoPixel-packed WRGB
+extern uint8_t     g_playerLsThemeColorCount;
 
 #ifdef __cplusplus
 extern "C" {

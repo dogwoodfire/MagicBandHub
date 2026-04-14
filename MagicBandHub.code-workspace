@@ -10,7 +10,8 @@
 			"/^cd '/Users/liamduffy/MagicBandHub' && python3 -m platformio run -e TEST-esp32-s3-audio-board$/": {
 				"approve": true,
 				"matchCommandLine": true
-			}
+			},
+			"\"$HOME/.platformio/penv/bin/platformio\"": true
 		}
 	}
 }
