@@ -16,6 +16,7 @@
 // Audio and SD Support
 #include "Audio_ES8311.h"
 #include "SD_Card.h"
+#include <Update.h>
 
 struct _lv_event_t; 
 
@@ -35,7 +36,8 @@ Audio audio(false, 3, I2S_NUM_1);
 Preferences prefs;
 AsyncWebServer server(80); 
 
-BandRecord registeredBands[50];
+#define BAND_MAX 150
+BandRecord registeredBands[BAND_MAX];
 int bandCount = 0;
 char ownersList[10][20]; 
 char locationsList[10][20];
@@ -75,6 +77,9 @@ bool        g_playerPaused  = false;
 uint8_t g_playerLightshow = 0;
 // Lightshow speed: 0=sedate 1=medium 2=lively
 uint8_t g_playerLsSpeed = 0;
+// ID3 metadata for currently playing track (cleared on track change)
+char g_playerTitle[128]  = "";
+char g_playerArtist[128] = "";
 // Repeat / loop playlist
 bool    g_playerRepeat    = true;
 bool    g_playerRepeatOne = false; // repeat current track instead of advancing
@@ -518,6 +523,7 @@ volatile bool g_webScanArmed = false;
 volatile bool g_webScanHasResult = false;    
 volatile bool g_webScanIsKnown = false;      
 volatile int  g_webScanKnownIndex = -1;      
+volatile int  g_webScanTagIndex = -1;        // index in registeredTags[] when a tag UID is scanned
 volatile uint8_t g_webScanUidLen = 0;        
 volatile uint8_t g_webScanUid[10] = {0};     
 char g_webScanUidStr[32] = {0};              
@@ -525,11 +531,16 @@ char g_webScanTypeStr[24] = {0};
 volatile bool g_webPendingNew = false;
 BandRecord g_webPendingRecord;               
 
+// NFC Tags storage (TAG_MAX is defined in web_portal.h)
+TagRecord registeredTags[TAG_MAX];
+int tagCount = 0;
+
 void clearWebScanData() {
     g_webScanArmed = false;
     g_webScanHasResult = false;
     g_webScanIsKnown = false;
     g_webScanKnownIndex = -1;
+    g_webScanTagIndex = -1;
     g_webScanUidLen = 0;
     memset((void*)g_webScanUid, 0, sizeof(g_webScanUid));
     g_webScanUidStr[0] = '\0';
@@ -575,20 +586,30 @@ extern "C" {
     bool web_has_scan_result() { return g_webScanHasResult; }
     bool web_scan_result_is_known() { return g_webScanIsKnown; }
     int  web_scan_known_index() { return g_webScanKnownIndex; }
+    int  web_scan_tag_index()   { return g_webScanTagIndex; }
     bool web_pending_new_band() { return g_webPendingNew; }
     void web_scan_uid_string(char *out, size_t outSize) { strncpy(out, g_webScanUidStr, outSize); }
     void web_scan_type_string(char *out, size_t outSize) { strncpy(out, g_webScanTypeStr, outSize); }
 
     int web_confirm_save_pending_new(bool yes) {
         if(!yes) { clearWebScanData(); return -1; }
-        if(bandCount >= 50) { clearWebScanData(); return -1; }
+        if(bandCount >= BAND_MAX) { clearWebScanData(); return -1; }
         registeredBands[bandCount] = g_webPendingRecord;
         int idx = bandCount; bandCount++;
-        prefs.begin("mbands", false);
-        prefs.putInt("count", bandCount);
-        prefs.putBytes(("b" + String(idx)).c_str(), &registeredBands[idx], sizeof(BandRecord));
-        prefs.end();
+        saveBandsToSD();
         clearWebScanData(); 
+        return idx;
+    }
+
+    int web_confirm_save_pending_tag() {
+        if(tagCount >= TAG_MAX) { clearWebScanData(); return -1; }
+        int idx = tagCount;
+        memset(&registeredTags[idx], 0, sizeof(TagRecord));
+        memcpy(registeredTags[idx].uid, g_webPendingRecord.uid, 7);
+        strncpy(registeredTags[idx].name, "New Tag", sizeof(registeredTags[idx].name) - 1);
+        tagCount++;
+        saveTagsToSD();
+        clearWebScanData();
         return idx;
     }
 }
@@ -596,6 +617,17 @@ extern "C" {
 // --- Audio Diagnostics Callbacks ---
 void audio_info(const char *info){ Serial.print("AUDIO_INFO: "); Serial.println(info); }
 void audio_eof_mp3(const char *info){ Serial.println("AUDIO: End of file reached"); }
+void audio_id3data(const char *info) {
+    if (!info) return;
+    Serial.printf("ID3: %s\n", info);
+    if (strncmp(info, "Title: ", 7) == 0) {
+        strncpy(g_playerTitle,  info + 7, sizeof(g_playerTitle)  - 1);
+        g_playerTitle[sizeof(g_playerTitle) - 1] = '\0';
+    } else if (strncmp(info, "Artist: ", 8) == 0) {
+        strncpy(g_playerArtist, info + 8, sizeof(g_playerArtist) - 1);
+        g_playerArtist[sizeof(g_playerArtist) - 1] = '\0';
+    }
+}
 
 void initIOExpander() {
     Wire.beginTransmission(0x20);
@@ -674,6 +706,89 @@ void handleUnknownBand() {
     Serial.println("Unknown band default chime sequence started.");
 }
 
+// ---------------------------------------------------------------------------
+// LittleFS-backed storage for bands and tags (internal 16MB flash, ~12MB partition)
+// Binary format: 4-byte int count, then count × sizeof(struct) raw bytes.
+// Migration: if the .bin file is absent, load from NVS legacy keys then write
+// the .bin file so subsequent boots use LittleFS only.
+// ---------------------------------------------------------------------------
+extern "C" void saveBandsToSD() {
+    File f = LittleFS.open("/bands.bin", FILE_WRITE);
+    if (!f) { Serial.println("[Flash] Cannot write /bands.bin"); return; }
+    f.write((const uint8_t*)&bandCount, sizeof(bandCount));
+    f.write((const uint8_t*)registeredBands, sizeof(BandRecord) * bandCount);
+    f.close();
+}
+
+extern "C" void saveTagsToSD() {
+    File f = LittleFS.open("/tags.bin", FILE_WRITE);
+    if (!f) { Serial.println("[Flash] Cannot write /tags.bin"); return; }
+    f.write((const uint8_t*)&tagCount, sizeof(tagCount));
+    f.write((const uint8_t*)registeredTags, sizeof(TagRecord) * tagCount);
+    f.close();
+}
+
+static bool loadBandsFromSD() {
+    File f = LittleFS.open("/bands.bin");
+    if (!f) return false;
+    int count = 0;
+    if (f.read((uint8_t*)&count, sizeof(count)) != sizeof(count) || count < 0 || count > BAND_MAX) {
+        f.close(); return false;
+    }
+    size_t want = sizeof(BandRecord) * count;
+    if ((size_t)f.read((uint8_t*)registeredBands, want) != want) {
+        f.close(); return false;
+    }
+    f.close();
+    bandCount = count;
+    Serial.printf("[Flash] Loaded %d bands from /bands.bin\n", bandCount);
+    return true;
+}
+
+static bool loadTagsFromSD() {
+    File f = LittleFS.open("/tags.bin");
+    if (!f) return false;
+    int count = 0;
+    if (f.read((uint8_t*)&count, sizeof(count)) != sizeof(count) || count < 0 || count > TAG_MAX) {
+        f.close(); return false;
+    }
+    size_t want = sizeof(TagRecord) * count;
+    if ((size_t)f.read((uint8_t*)registeredTags, want) != want) {
+        f.close(); return false;
+    }
+    f.close();
+    tagCount = count;
+    Serial.printf("[Flash] Loaded %d tags from /tags.bin\n", tagCount);
+    return true;
+}
+
+void handleTagScan(int tagIdx) {
+    if (isSuccessActive) return;
+    // If a custom/built-in theme is set it controls both lights and audio
+    if (registeredTags[tagIdx].themeId != 0) {
+        handleSuccess(0x6600CC, registeredTags[tagIdx].themeId);
+        return;
+    }
+    // No theme: play direct audio file (if any) then do the default LED animation
+    if (strlen(registeredTags[tagIdx].audioFile) > 0) {
+        char path[72];
+        snprintf(path, sizeof(path), "/%s", registeredTags[tagIdx].audioFile);
+        bool played = Play_Music_file(path);
+        if (played) {
+            strncpy(g_playlist[0].name, registeredTags[tagIdx].audioFile, sizeof(g_playlist[0].name) - 1);
+            g_playlistCount = 1; g_playerIndex = 0;
+            g_playerActive = true; g_playerPaused = false; g_playerRepeat = false;
+        } else {
+            Play_Default_Band_Chime();
+        }
+        startDefaultBandChimeSequence();
+        return;
+    }
+    // Fallback: default chime + LED
+    startDefaultBandChimeSequence();
+    Serial.printf("Tag '%s' default chime sequence started.\n", registeredTags[tagIdx].name);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(2000); // Give Serial Monitor time to connect
@@ -687,6 +802,50 @@ void setup() {
     
     // FIXED: Only call SD_Init once
     SD_Init();
+
+    // SD OTA: if /firmware.bin exists on the SD card, flash it then delete it
+    if (isSDReady) {
+        File otaFile = SD_MMC.open("/firmware.bin");
+        if (otaFile && !otaFile.isDirectory()) {
+            size_t otaSize = otaFile.size();
+            Serial.printf("[OTA] Found firmware.bin (%u bytes), flashing...\n", otaSize);
+            // Write pre-flash backup so user can restore if struct layout ever changes
+            {
+                String backupJson = buildBackupJson();
+                File backupFile = SD_MMC.open("/ota_backup.json", FILE_WRITE);
+                if (backupFile) {
+                    backupFile.print(backupJson);
+                    backupFile.close();
+                    Serial.println("[OTA] Pre-flash backup written to /ota_backup.json");
+                } else {
+                    Serial.println("[OTA] Warning: could not write /ota_backup.json");
+                }
+            }
+            // Amber LEDs while flashing
+            strip.begin(); strip.setBrightness(40);
+            strip.fill(strip.Color(180, 80, 0)); strip.show();
+            if (Update.begin(otaSize, U_FLASH)) {
+                size_t written = Update.writeStream(otaFile);
+                otaFile.close();
+                if (Update.end(true) && written == otaSize) {
+                    Serial.println("[OTA] Flash successful, deleting firmware.bin and rebooting");
+                    SD_MMC.remove("/firmware.bin");
+                    strip.fill(strip.Color(0, 150, 0)); strip.show(); delay(1000);
+                    ESP.restart();
+                } else {
+                    Serial.printf("[OTA] Flash failed: %s\n", Update.errorString());
+                    strip.fill(strip.Color(150, 0, 0)); strip.show(); delay(2000);
+                    strip.clear(); strip.show();
+                }
+            } else {
+                otaFile.close();
+                Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
+            }
+        } else {
+            if (otaFile) otaFile.close();
+        }
+    }
+
     audio.setBufsize(4096, 65536);
     Audio_Init();
 
@@ -698,10 +857,31 @@ void setup() {
     Wire.beginTransmission(0x20); Wire.write(0x03); Wire.write(0xFF); Wire.endTransmission();
 
     loadCategoriesFromPrefs();
-    prefs.begin("mbands", false);
-    int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > 50) ? 0 : rc;
-    for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
-    prefs.end();
+
+    // Load bands: SD first; fall back to NVS (one-time migration)
+    if (!loadBandsFromSD()) {
+        prefs.begin("mbands", false);
+        int rc = prefs.getInt("count", 0); bandCount = (rc < 0 || rc > BAND_MAX) ? 0 : rc;
+        for(int i=0; i<bandCount; i++) prefs.getBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
+        prefs.end();
+        if (isSDReady && bandCount > 0) {
+            saveBandsToSD();
+            Serial.printf("[SD] Migrated %d bands from NVS to /bands.bin\n", bandCount);
+        }
+    }
+
+    // Load tags: SD first; fall back to NVS (one-time migration)
+    if (!loadTagsFromSD()) {
+        prefs.begin("tags", false);
+        int tc = prefs.getInt("count", 0); tagCount = (tc < 0 || tc > TAG_MAX) ? 0 : tc;
+        for(int i=0; i<tagCount; i++) prefs.getBytes(("t" + String(i)).c_str(), &registeredTags[i], sizeof(TagRecord));
+        prefs.end();
+        if (isSDReady && tagCount > 0) {
+            saveTagsToSD();
+            Serial.printf("[SD] Migrated %d tags from NVS to /tags.bin\n", tagCount);
+        }
+    }
+
     loadCustomThemesFromPrefs();
     
     if(nfc.begin()) nfc.SAMConfig();
@@ -1012,9 +1192,14 @@ void loop() {
             int idx = -1;
             for (int i = 0; i < bandCount; i++) if (memcmp(uid, registeredBands[i].uid, 7) == 0) { idx = i; break; }
 
+            int tagIdx = -1;
+            for (int i = 0; i < tagCount; i++) if (memcmp(uid, registeredTags[i].uid, 7) == 0) { tagIdx = i; break; }
+
             if(g_webScanArmed) {
                 g_webScanUidLen = len; memcpy((void*)g_webScanUid, uid, len);
-                g_webScanKnownIndex = idx; g_webScanIsKnown = (idx != -1); g_webScanHasResult = true;
+                g_webScanKnownIndex = idx;
+                g_webScanTagIndex = tagIdx;
+                g_webScanIsKnown = (idx != -1 || tagIdx != -1); g_webScanHasResult = true;
                 if(!g_webScanIsKnown) {
                     memset(&g_webPendingRecord, 0, sizeof(g_webPendingRecord));
                     memcpy(g_webPendingRecord.uid, uid, 7);
@@ -1037,6 +1222,9 @@ void loop() {
             if (idx != -1) {
                 Serial.printf("Known band idx=%d name=%s themeId=%u\n", idx, registeredBands[idx].name, (unsigned)registeredBands[idx].themeId);
                 handleSuccess(registeredBands[idx].color, registeredBands[idx].themeId);
+            } else if (tagIdx != -1) {
+                Serial.printf("Known tag idx=%d name=%s\n", tagIdx, registeredTags[tagIdx].name);
+                handleTagScan(tagIdx);
             }
             else {
                 handleUnknownBand();

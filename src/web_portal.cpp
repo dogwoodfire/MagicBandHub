@@ -42,10 +42,12 @@ extern "C" void web_cancel_scan();
 extern "C" bool web_has_scan_result();
 extern "C" bool web_scan_result_is_known();
 extern "C" int  web_scan_known_index();
+extern "C" int  web_scan_tag_index();
 extern "C" void web_scan_uid_string(char *out, size_t outSize);
 extern "C" void web_scan_type_string(char *out, size_t outSize);
 extern "C" bool web_pending_new_band();
 extern "C" int  web_confirm_save_pending_new(bool yes);
+extern "C" int  web_confirm_save_pending_tag();
 
 uint32_t hexToUint(String hex) {
     if(hex.startsWith("#")) hex = hex.substring(1);
@@ -694,6 +696,98 @@ static String buildFullThemeSelectOptions(uint16_t currentId) {
     return out;
 }
 
+// Free function — builds the full backup JSON (same content as /export).
+// Called from the /export route and from the SD-OTA pre-flash backup in main.cpp.
+String buildBackupJson() {
+    String json = "{";
+    json += "\"version\":1,";
+    json += "\"bandCount\":" + String(bandCount) + ",";
+    json += "\"bands\":[";
+    for(int i = 0; i < bandCount; i++) {
+        char uidBuf[32] = {0};
+        formatUidString(registeredBands[i].uid, 7, uidBuf, sizeof(uidBuf));
+        if(i > 0) json += ",";
+        json += "{";
+        json += "\"uid\":\"" + jsonEscape(String(uidBuf)) + "\",";
+        json += "\"name\":\"" + jsonEscape(String(registeredBands[i].name)) + "\",";
+        json += "\"type\":\"" + jsonEscape(String(registeredBands[i].type)) + "\",";
+        json += "\"owner\":\"" + jsonEscape(String(registeredBands[i].owner)) + "\",";
+        json += "\"location\":\"" + jsonEscape(String(registeredBands[i].location)) + "\",";
+        json += "\"dateBought\":\"" + jsonEscape(String(registeredBands[i].dateBought)) + "\",";
+        json += "\"color\":" + String((unsigned int)registeredBands[i].color) + ",";
+        json += "\"themeId\":" + String((unsigned int)registeredBands[i].themeId) + ",";
+        json += "\"imageUrl\":\"" + jsonEscape(String(registeredBands[i].imageUrl)) + "\",";
+        json += "\"mbcListing\":\"" + jsonEscape(String(registeredBands[i].mbcListing)) + "\",";
+        json += "\"releaseType\":\"" + jsonEscape(String(registeredBands[i].releaseType)) + "\",";
+        json += "\"releaseDate\":\"" + jsonEscape(String(registeredBands[i].releaseDate)) + "\",";
+        json += "\"releasedAt\":\"" + jsonEscape(String(registeredBands[i].releasedAt)) + "\",";
+        json += "\"bandColorName\":\"" + jsonEscape(String(registeredBands[i].bandColorName)) + "\",";
+        json += "\"iconColorName\":\"" + jsonEscape(String(registeredBands[i].iconColorName)) + "\",";
+        json += "\"originalPrice\":\"" + jsonEscape(String(registeredBands[i].originalPrice)) + "\",";
+        json += "\"sku\":\"" + jsonEscape(String(registeredBands[i].sku)) + "\"";
+        json += "}";
+    }
+    json += "],";
+    json += "\"owners\":[";
+    bool first = true;
+    for(int i = 0; i < 10; i++) {
+        if(ownersList[i][0] == '\0') continue;
+        if(!first) json += ",";
+        first = false;
+        json += "\"" + jsonEscape(String(ownersList[i])) + "\"";
+    }
+    json += "],";
+    json += "\"locations\":[";
+    first = true;
+    for(int i = 0; i < 10; i++) {
+        if(locationsList[i][0] == '\0') continue;
+        if(!first) json += ",";
+        first = false;
+        json += "\"" + jsonEscape(String(locationsList[i])) + "\"";
+    }
+    json += "],";
+    json += "\"settings\":{";
+    json += "\"idleTimeout\":" + String((unsigned int)idleTimeout) + ",";
+    json += "\"sleepTimeout\":" + String((unsigned int)sleepTimeout);
+    json += "},";
+    json += "\"customThemes\":[";
+    for(int i = 0; i < customThemeCount; i++) {
+        if(i > 0) json += ",";
+        json += "{";
+        json += "\"id\":" + String((unsigned int)customThemes[i].id) + ",";
+        json += "\"name\":\"" + jsonEscape(String(customThemes[i].name)) + "\",";
+        json += "\"phases\":" + String((unsigned int)customThemes[i].phases) + ",";
+        json += "\"loop\":" + String((unsigned int)customThemes[i].loopPattern) + ",";
+        json += "\"colors\":[";
+        for(uint8_t ci = 0; ci < customThemes[i].colorCount && ci < CUSTOM_THEME_MAX_COLORS; ci++) {
+            if(ci > 0) json += ",";
+            json += String((unsigned int)customThemes[i].colors[ci]);
+        }
+        json += "],";
+        json += "\"audioFile\":\"" + jsonEscape(String(customThemes[i].audioFile)) + "\",";
+        json += "\"lsUseColors\":" + String((unsigned int)customThemes[i].lsUseThemeColors);
+        json += "}";
+    }
+    json += "],";
+    json += "\"tags\":[";
+    for(int i = 0; i < tagCount; i++) {
+        char uidBuf[32] = {0};
+        formatUidString(registeredTags[i].uid, 7, uidBuf, sizeof(uidBuf));
+        if(i > 0) json += ",";
+        json += "{";
+        json += "\"uid\":\"" + jsonEscape(String(uidBuf)) + "\",";
+        json += "\"name\":\"" + jsonEscape(String(registeredTags[i].name)) + "\",";
+        json += "\"themeId\":" + String((unsigned int)registeredTags[i].themeId) + ",";
+        json += "\"audioFile\":\"" + jsonEscape(String(registeredTags[i].audioFile)) + "\",";
+        json += "\"tagType\":\"" + jsonEscape(String(registeredTags[i].tagType)) + "\",";
+        json += "\"imageUrl\":\"" + jsonEscape(String(registeredTags[i].imageUrl)) + "\"";
+        json += "}";
+    }
+    json += "]";
+    json += "}";
+    return json;
+}
+
 void initWebServer() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
@@ -706,7 +800,7 @@ void initWebServer() {
         html += ".summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;}";
         html += ".summary-left{display:flex;align-items:center;gap:12px;text-align:left;}";
         html += ".thumb{width:110px;height:180px;object-fit:contain;object-position:top center;border-radius:12px;background:#f4f6ff;box-sizing:border-box;padding:10px;display:block;border:1px solid #e0e4ff;}";
-        html += ".settings-header{cursor:pointer;font-weight:700;padding:10px;color:#1a237e;font-size:0.95em;} .settings-body{display:none;text-align:left;}";
+        html += ".settings-header{cursor:pointer;font-weight:700;padding:16px 18px;color:#1a237e;font-size:0.97em;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;border-radius:6px;transition:background 0.15s;} .settings-header:hover{background:#f0f2ff;} .settings-header .sh-icon{display:flex;align-items:center;gap:10px;} .settings-header .sh-chevron{transition:transform 0.2s;flex-shrink:0;} .settings-header.open .sh-chevron{transform:rotate(90deg);} .settings-body{display:none;text-align:left;padding:0 6px 6px;}";
         html += ".meta{color:#888;font-size:0.82em;line-height:1.4;}";
         html += ".status{margin-top:10px;padding:10px 14px;border-radius:10px;font-weight:700;background:#fff8e1;color:#e65100;border:1px solid #ffe0b2;}";
         html += ".details{margin-top:14px;text-align:left;}";
@@ -797,9 +891,34 @@ void initWebServer() {
         html += "}";
         html += "function closeMeta(){document.getElementById('metaModal').classList.remove('open');}";
         html += "function toggleDetails(id){ var el=document.getElementById('d'+id); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
-        // Auto-open band card from ?open= param on load
-        html += "window.addEventListener('load', function(){ try{ var sv=localStorage.getItem('mbhub_view'); if(sv==='tile') setView('tile'); } catch(e){} try{ var p=new URLSearchParams(window.location.search); var open=p.get('open'); if(open!==null){ var id=parseInt(open,10); if(!isNaN(id)){ setView('list'); toggleDetails(id); var el=document.getElementById('d'+id); if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); } } } }catch(e){} });";
-        html += "function toggleSettings(){ var el=document.getElementById('settings'); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
+        html += "function parseReleaseDate(s){ if(!s) return 0; var d=new Date(s); return isNaN(d.getTime())?0:d.getTime(); }";
+        html += "function cmpBands(a,b,key){";
+        html += "  var dir=key.endsWith('-desc')?-1:1;";
+        html += "  var field=key.replace(/-asc$/,'').replace(/-desc$/,'');";
+        html += "  var av,bv;";
+        html += "  if(field==='reg'){ return dir*(parseInt(a.getAttribute('data-idx')||'0',10)-parseInt(b.getAttribute('data-idx')||'0',10)); }";
+        html += "  else if(field==='alpha'){ av=(a.getAttribute('data-name')||'').toLowerCase(); bv=(b.getAttribute('data-name')||'').toLowerCase(); }";
+        html += "  else if(field==='bought'){ av=a.getAttribute('data-bought')||''; bv=b.getAttribute('data-bought')||''; }";
+        html += "  else if(field==='rdate'){ return dir*(parseReleaseDate(a.getAttribute('data-rdate')||'')-parseReleaseDate(b.getAttribute('data-rdate')||'')); }";
+        html += "  else { av=''; bv=''; }";
+        html += "  if(av<bv) return -dir; if(av>bv) return dir; return 0;";
+        html += "}";
+        html += "function sortBands(){";
+        html += "  var key=(document.getElementById('fSort')||{value:'reg-asc'}).value;";
+        html += "  var lv=document.getElementById('listView');";
+        html += "  var cards=Array.from(lv.querySelectorAll('.band-card'));";
+        html += "  cards.sort(function(a,b){return cmpBands(a,b,key);});";
+        html += "  cards.forEach(function(c){lv.appendChild(c);});";
+        html += "  var tg=document.querySelector('.tile-grid');";
+        html += "  if(tg){ var tiles=Array.from(tg.querySelectorAll('.tile')); tiles.sort(function(a,b){return cmpBands(a,b,key);}); tiles.forEach(function(t){tg.appendChild(t);}); }";
+        html += "  filterBands();";
+        html += "}";
+        // Auto-open band card from ?open= param on load; also handle ?opentag= for tags
+        html += "window.addEventListener('load', function(){ try{ var sv=localStorage.getItem('mbhub_view'); if(sv==='tile') setView('tile'); } catch(e){} try{ var p=new URLSearchParams(window.location.search); var open=p.get('open'); if(open!==null){ var id=parseInt(open,10); if(!isNaN(id)){ setView('list'); toggleDetails(id); var el=document.getElementById('d'+id); if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); } } } }catch(e){} try{ var p=new URLSearchParams(window.location.search); var ot=p.get('opentag'); if(ot!==null){ var id=parseInt(ot,10); if(!isNaN(id)){ var tb=document.getElementById('tagsBody'); var hdr=document.getElementById('hdrTags'); if(tb){ tb.style.display='block'; if(hdr) hdr.classList.add('open'); } var el=document.getElementById('td'+id); if(el){ el.style.display='block'; el.scrollIntoView({behavior:'smooth',block:'start'}); } } } }catch(e){} });";
+        html += "function toggleSettings(){ var el=document.getElementById('settings'),hdr=document.getElementById('hdrSettings'); if(!el) return; var open=el.style.display==='none'||el.style.display===''; el.style.display=open?'block':'none'; if(hdr) hdr.classList.toggle('open',open); }";
+        html += "function toggleOwnerLocs(){ var el=document.getElementById('ownerLocs'),hdr=document.getElementById('hdrOwnerLocs'); if(!el) return; var open=el.style.display==='none'||el.style.display===''; el.style.display=open?'block':'none'; if(hdr) hdr.classList.toggle('open',open); }";
+        html += "function toggleTags(){ var el=document.getElementById('tagsBody'),hdr=document.getElementById('hdrTags'); if(!el) return; var open=el.style.display==='none'||el.style.display===''; el.style.display=open?'block':'none'; if(hdr) hdr.classList.toggle('open',open); }";
+        html += "function toggleTagDetails(i){ var d=document.getElementById('td'+i); if(d){ var o=d.style.display==='block'; d.style.display=o?'none':'block'; } }";
 
                 // Screen-less scan/register helpers
         html += "let __scanPoll=null;";
@@ -812,10 +931,13 @@ void initWebServer() {
         html += "function showScanArmed(){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Tap a band to the reader...'; body.innerHTML='<div style=\"padding:10px;border:1px dashed #ccc;border-radius:10px;\">Waiting for a band...</div>'; }";
         html += "function showScanKnown(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Known band detected'; var img=''; if(d.img){ img='<img src=\"'+d.img+'\" style=\"width:140px;border-radius:10px;display:block;margin:10px auto;background:#fff;padding:8px;box-sizing:border-box;border:1px solid #e0e4ff;\">'; } var co=d.checkedOut?1:0; var checkBtn=co?'<button class=\"btn-secondary\" style=\"margin:4px 0;\" onclick=\"doCheckInOut('+d.knownIndex+',0);return false;\">&#10003; Check In (mark as home)</button>':'<button class=\"btn-secondary\" style=\"margin:4px 0;background:#fff8e1;color:#e65100;border-color:#ffe0b2;\" onclick=\"doCheckInOut('+d.knownIndex+',1);return false;\">&#x1f9f3; Check Out (pack for trip)</button>'; body.innerHTML= img + '<div style=\"font-weight:800;color:#1a237e;\">'+(d.name||'Known band')+'</div><div class=\"meta\">'+(d.type||'')+'</div>'+checkBtn+'<button class=\"btn-secondary\" style=\"margin-top:6px;\" onclick=\"openBand('+d.knownIndex+');return false;\">&#9998; Open / Edit</button>'; stopScanPoll(); }";
         html += "function doCheckInOut(idx,out){ fetch('/checkinout?id='+idx+'&out='+out,{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json();}).then(function(d){ if(d&&d.ok) window.location='/'; else alert('Failed'); }).catch(function(){alert('Error');}); }";
-        html += "function showScanNew(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; body.style.display='block'; hint.innerText='New band detected'; body.innerHTML='<div style=\"font-weight:800;\">New band</div><div class=\"meta\">'+(d.uid||'')+' &nbsp;'+(d.type||'')+'</div><div style=\"display:flex;gap:10px;margin-top:10px;\"><button class=\"btn-save\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(1);return false;\">Yes, save</button><button class=\"btn-del\" style=\"width:100%;padding:10px;\" onclick=\"confirmSave(0);return false;\">No</button></div>'; }";
+        html += "function showScanNew(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; body.style.display='block'; hint.innerText='Unrecognised NFC tag'; body.innerHTML='<div style=\"font-weight:800;\">New NFC tag</div><div class=\"meta\">'+(d.uid||'')+' &nbsp;'+(d.type||'')+'</div><div style=\"font-size:0.9em;color:#555;margin-top:6px;\">What would you like to save this as?</div><div style=\"display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;\"><button class=\"btn-save\" style=\"flex:1;min-width:100px;padding:10px;\" onclick=\"confirmSave(1);return false;\">&#127922; Magic Band</button><button class=\"btn-secondary\" style=\"flex:1;min-width:100px;padding:10px;\" onclick=\"confirmSaveTag();return false;\">&#127991; NFC Tag</button><button class=\"btn-del\" style=\"flex:1;min-width:80px;padding:10px;\" onclick=\"confirmSave(0);return false;\">Skip</button></div>'; }";
         html += "function confirmSave(yes){ fetch('/scan_confirm?yes='+yes+'&ajax=1').then(r=>r.json()).then(d=>{ var c=document.getElementById('btnScanCancel'); if(c) c.style.display='none'; if(d && d.saved && d.openId>=0){ window.location='/?msg=scan_saved&open='+d.openId; } else { window.location='/?msg=scan_cancel'; } }).catch(()=>{ window.location='/?msg=scan_cancel'; }); }";
+        html += "function confirmSaveTag(){ fetch('/scan_confirm?yes=1&asTag=1&ajax=1').then(r=>r.json()).then(d=>{ if(d && d.saved && d.openId>=0){ window.location='/?msg=tag_saved&opentag='+d.openId; } else { window.location='/?msg=scan_cancel'; } }).catch(()=>{ window.location='/?msg=scan_cancel'; }); }";
+        html += "function showScanKnownTag(d){ var body=document.getElementById('scanBody'); var hint=document.getElementById('scanHint'); if(!body||!hint) return; body.style.display='block'; hint.innerText='Known tag detected'; var img=''; if(d.img){ img='<img src=\"'+d.img+'\" style=\"width:100px;border-radius:10px;display:block;margin:8px auto;background:#fff;padding:6px;box-sizing:border-box;border:1px solid #e0e4ff;\">'; } body.innerHTML=img+'<div style=\"font-weight:800;color:#1a237e;\">'+(d.name||'Known tag')+'</div><div class=\"meta\">'+(d.tagType||'')+'</div><button class=\"btn-secondary\" style=\"margin-top:8px;\" onclick=\"openTag('+d.tagIndex+');return false;\">&#9998; Open / Edit</button>'; stopScanPoll(); }";
         html += "function openBand(id){ window.location='/?open='+id; }";
-        html += "function pollScan(){ fetch('/scan_status').then(r=>r.json()).then(d=>{ if(!d||!d.state) return; if(d.state==='known'){ showScanKnown(d); } else if(d.state==='new'){ showScanNew(d); } else if(d.state==='armed'){ showScanArmed(); } }).catch(()=>{}); }";
+        html += "function openTag(id){ window.location='/?opentag='+id; }";
+        html += "function pollScan(){ fetch('/scan_status').then(r=>r.json()).then(d=>{ if(!d||!d.state) return; if(d.state==='known'){ if(d.tagIndex>=0){ showScanKnownTag(d); } else { showScanKnown(d); } } else if(d.state==='new'){ showScanNew(d); } else if(d.state==='armed'){ showScanArmed(); } }).catch(()=>{}); }";
         html += "</script></head><body><div class='container'>";
 
         if(request->hasParam("msg")) {
@@ -837,6 +959,10 @@ void initWebServer() {
                 html += "<div class='card' style='background:#d1ecf1;color:#0c5460;'>Ready to scan. Tap a band to the reader&#8230;</div>";
             } else if(msg == "scan_saved") {
                 html += "<div class='card' style='background:#d4edda;color:#155724;'>Band saved &#10003;</div>";
+            } else if(msg == "tag_saved") {
+                html += "<div class='card' style='background:#d4edda;color:#155724;'>Tag saved &#10003; — edit it in the NFC Tags section below.</div>";
+            } else if(msg == "tag_deleted") {
+                html += "<div class='card' style='background:#fff3cd;color:#856404;'>Tag deleted.</div>";
             } else if(msg == "scan_cancel") {
                 html += "<div class='card' style='background:#fff3cd;color:#856404;'>Scan cancelled.</div>";
             } else if(msg == "export_ready") {
@@ -861,10 +987,17 @@ void initWebServer() {
             g_lookupResult = 0;
         }
 
-        if(WiFi.status() != WL_CONNECTED) {
-            html += "<h1>Hub Setup</h1><div class='card'><h3>Connect WiFi</h3><form action='/setwifi' method='GET'>";
-            html += "SSID: <input type='text' name='ssid' required><br>Pass: <input type='password' name='pass'><br>";
-            html += "<input type='submit' class='btn-save' value='Save & Restart'></form></div>";
+        bool apMode = (WiFi.status() != WL_CONNECTED);
+
+        if (apMode) {
+            html += "<h1>MagicBand Hub</h1>";
+            // AP-mode setup banner
+            html += "<div class='card' style='background:#fff8e1;border:2px solid #ffe082;'>";
+            html += "<div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap;'>";
+            html += "<svg width='26' height='26' viewBox='0 0 24 24' fill='none' stroke='#e65100' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='flex-shrink:0;'><path d='M1 6s4-4 11-4 11 4 11 4'/><path d='M5 10s3-3 7-3 7 3 7 3'/><path d='M9 14s1.5-1.5 3-1.5 3 1.5 3 1.5'/><line x1='12' y1='18' x2='12.01' y2='18'/></svg>";
+            html += "<div><div style='font-weight:800;color:#e65100;font-size:1em;'>Not connected to Wi-Fi</div>";
+            html += "<div class='meta' style='margin-top:2px;'>Connect to <b>MagicBandHub-Setup</b> Wi-Fi, then use the Settings below to join your home network.</div></div>";
+            html += "</div></div>";
         } else {
             html += "<h1>MagicBand Hub</h1>";
 
@@ -899,7 +1032,7 @@ void initWebServer() {
             html += "  var btn=document.getElementById('mpPlayPause');";
             html += "  var ctrl=document.getElementById('mpControls');";
             html += "  if(d.playing){";
-            html += "    if(trk) trk.textContent=d.track||'Now playing';";
+            html += "    if(trk){ if(d.title&&d.title!='') trk.innerHTML=(d.artist&&d.artist!=''?'<b>'+d.title+'</b> &mdash; '+d.artist:'<b>'+d.title+'</b>'); else trk.textContent=d.track||'Now playing'; }"; 
             html += "    if(btn) btn.innerHTML=d.paused?'&#9654; Resume':'&#9646;&#9646; Pause';";
             html += "    if(ctrl) ctrl.style.display='flex';";
             html += "  } else {";
@@ -927,11 +1060,17 @@ void initWebServer() {
             html += "<div id='scanBody' style='margin-top:10px;'></div>";
             html += "<div class='meta' id='scanHint' style='margin-top:8px;display:none;'>Hold your MagicBand to the reader. The LEDs will swirl while scanning is active.</div>";
             html += "</div>";
-            
-            // FILTER BAR
+        } // end connected-only block
+
+        // VIEW TOGGLE
+            html += "<div class='view-toggle'>";
+            html += "<button id='btnList' class='active' onclick='setView(\"list\")'>&#9776; List</button>";
+            html += "<button id='btnTile' onclick='setView(\"tile\")'>&#9632;&#9632; Tiles</button>";
+            html += "</div>";
+
+            // FILTER BAR: owner+location dropdowns, then search on its own row
             html += "<div class='card' style='text-align:left;'>";
-            html += "<div style='display:flex; flex-wrap:wrap; gap:10px; align-items:center;'>";
-            html += "<input type='text' id='search' oninput='filterBands()' placeholder='Search by name, type\u2026' style='flex:1; min-width:140px;'>";
+            html += "<div style='display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:8px;'>";
             html += "<select id='fOwner' onchange='filterBands()' style='flex:1; min-width:120px;'><option value=''>All owners</option>";
             for(int i=0; i<10; i++) {
                 if(ownersList[i][0] != '\0') {
@@ -948,12 +1087,18 @@ void initWebServer() {
                 }
             }
             html += "</select>";
-            html += "</div></div>";
-
-            // VIEW TOGGLE
-            html += "<div class='view-toggle'>";
-            html += "<button id='btnList' class='active' onclick='setView(\"list\")'>&#9776; List</button>";
-            html += "<button id='btnTile' onclick='setView(\"tile\")'>&#9632;&#9632; Tiles</button>";
+            html += "<select id='fSort' onchange='sortBands()' style='flex:1; min-width:140px;'>";
+            html += "<option value='reg-asc'>Registered: oldest first</option>";
+            html += "<option value='reg-desc'>Registered: newest first</option>";
+            html += "<option value='alpha-asc'>Name: A \u2192 Z</option>";
+            html += "<option value='alpha-desc'>Name: Z \u2192 A</option>";
+            html += "<option value='bought-asc'>Purchased: oldest first</option>";
+            html += "<option value='bought-desc'>Purchased: newest first</option>";
+            html += "<option value='rdate-asc'>Released: oldest first</option>";
+            html += "<option value='rdate-desc'>Released: newest first</option>";
+            html += "</select>";
+            html += "</div>";
+            html += "<input type='text' id='search' oninput='filterBands()' placeholder='Search by name, type\u2026' style='width:100%; box-sizing:border-box;'>";
             html += "</div>";
 
             // BAND JS DATA (for metadata modal)
@@ -971,7 +1116,8 @@ void initWebServer() {
                 String jIcol  = jsonEscape(String(b.iconColorName));
                 String jPrice = jsonEscape(String(b.originalPrice));
                 String jSku   = jsonEscape(String(b.sku));
-                html += "{\"img\":\"" + jImg + "\",\"name\":\"" + jName + "\",\"owner\":\"" + jOwner + "\",\"loc\":\"" + jLoc + "\",\"type\":\"" + jType + "\",\"rtype\":\"" + jRtype + "\",\"rdate\":\"" + jRdate + "\",\"bcol\":\"" + jBcol + "\",\"icol\":\"" + jIcol + "\",\"price\":\"" + jPrice + "\",\"sku\":\"" + jSku + "\",\"checkedOut\":" + String((int)b.checkedOut) + "}";
+                String jBought = jsonEscape(String(b.dateBought));
+                html += "{\"img\":\"" + jImg + "\",\"name\":\"" + jName + "\",\"owner\":\"" + jOwner + "\",\"loc\":\"" + jLoc + "\",\"type\":\"" + jType + "\",\"rtype\":\"" + jRtype + "\",\"rdate\":\"" + jRdate + "\",\"bought\":\"" + jBought + "\",\"bcol\":\"" + jBcol + "\",\"icol\":\"" + jIcol + "\",\"price\":\"" + jPrice + "\",\"sku\":\"" + jSku + "\",\"checkedOut\":" + String((int)b.checkedOut) + "}";
                 if(i < bandCount - 1) html += ",";
             }
             html += "];</script>";
@@ -986,7 +1132,10 @@ void initWebServer() {
                 String escName = htmlEscape(String(b.name));
                 String escOwner = htmlEscape(strlen(b.owner)>0 ? String(b.owner) : "None");
                 String escLoc   = htmlEscape(strlen(b.location)>0 ? String(b.location) : "None");
-                html += "<div id='tile" + String(i) + "' class='tile' onclick='openMeta(" + String(i) + ")' data-owner='" + escOwner + "' data-loc='" + escLoc + "'>";
+                String escTName  = htmlEscape(String(b.name));
+                String escTBought = htmlEscape(String(b.dateBought));
+                String escTRdate  = htmlEscape(String(b.releaseDate));
+                html += "<div id='tile" + String(i) + "' class='tile' onclick='openMeta(" + String(i) + ")' data-owner='" + escOwner + "' data-loc='" + escLoc + "' data-idx='" + String(i) + "' data-name='" + escTName + "' data-bought='" + escTBought + "' data-rdate='" + escTRdate + "'>";
                 if(strlen(b.imageUrl) > 5) {
                     html += "<img src='" + escImg + "' alt=''>";
                 } else {
@@ -1074,7 +1223,9 @@ void initWebServer() {
                 String escOp    = htmlEscape(String(registeredBands[i].originalPrice));
                 String escSku   = htmlEscape(String(registeredBands[i].sku));
 
-                html += "<div class='card band-card' data-owner='" + escOwner + "' data-loc='" + escLoc + "' data-idx='" + String(i) + "'>";
+                String escBought = htmlEscape(String(registeredBands[i].dateBought));
+                String escRdate2 = htmlEscape(String(registeredBands[i].releaseDate));
+                html += "<div class='card band-card' data-owner='" + escOwner + "' data-loc='" + escLoc + "' data-idx='" + String(i) + "' data-name='" + escName + "' data-bought='" + escBought + "' data-rdate='" + escRdate2 + "'>";
 
                 // Summary header (click to expand)
                 html += "<div class='summary' onclick='toggleDetails(" + String(i) + ")'>";
@@ -1176,15 +1327,10 @@ void initWebServer() {
 
             html += "</div>"; // #listView
 
-            // SETTINGS (collapsible)
+            // OWNERS & LOCATIONS (collapsible)
             html += "<div class='card'>";
-            html += "<div class='settings-header' onclick='toggleSettings()'>Settings (Owners, Locations, Hub)</div>";
-            html += "<div class='settings-body' id='settings'>";
-
-            // THEME BUILDER LINK
-            html += "<hr><h3>Theme Builder</h3>";
-            html += "<div class='meta' style='margin-bottom:10px;'>Create custom LED light patterns with your own colours and audio files.</div>";
-            html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/themes'>Open Theme Builder</a>";
+            html += "<div class='settings-header' id='hdrOwnerLocs' onclick='toggleOwnerLocs()'><span class='sh-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/></svg>Owners &amp; Locations</span><svg class='sh-chevron' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></div>";
+            html += "<div class='settings-body' id='ownerLocs'>";
 
             // OWNERS
             html += "<h3>Owners</h3>";
@@ -1234,21 +1380,229 @@ void initWebServer() {
             html += "<input type='submit' class='btn-save' value='Add Location' style='width:auto; padding:10px 14px;'>";
             html += "</div></form>";
 
-            // (Hub Settings removed)
+            html += "</div></div>"; // ownerLocs body + card
+
+            // NFC TAGS — collapsible card
+            html += "<div class='card'>";
+            html += "<div class='settings-header' id='hdrTags' onclick='toggleTags()'><span class='sh-icon'>";
+            html += "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z'/><line x1='7' y1='7' x2='7.01' y2='7'/></svg>";
+            html += "NFC Tags (" + String(tagCount) + ")</span>";
+            html += "<svg class='sh-chevron' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></div>";
+            html += "<div class='settings-body' id='tagsBody'>";
+            if(tagCount == 0) {
+                html += "<div style='color:#888;font-size:0.9em;padding:8px 0 4px;'>No tags saved yet. Tap any NFC tag (keychain, sticker, wristband…) on the reader while the scanner is armed &mdash; then choose <em>NFC Tag</em>.</div>";
+            } else {
+                for(int i = 0; i < tagCount; i++) {
+                    String tName = htmlEscape(String(registeredTags[i].name[0] ? registeredTags[i].name : "Tag"));
+                    String tType = htmlEscape(String(registeredTags[i].tagType));
+                    String tImg  = htmlEscape(String(registeredTags[i].imageUrl));
+                    String tAudio= htmlEscape(String(registeredTags[i].audioFile));
+                    char hStr[8]; sprintf(hStr, "%u", (unsigned)registeredTags[i].themeId);
+
+                    html += "<div class='card' style='margin:6px 0;'>";
+                    html += "<div style='display:flex;align-items:center;gap:10px;cursor:pointer;' onclick='toggleTagDetails(" + String(i) + ")'>";
+                    if(strlen(registeredTags[i].imageUrl) > 5) {
+                        html += "<img src='" + tImg + "' style='width:54px;height:54px;object-fit:cover;border-radius:10px;flex-shrink:0;background:#f4f6ff;border:1px solid #e0e4ff;'>";
+                    } else {
+                        html += "<div style='width:54px;height:54px;border-radius:10px;background:#ede7f6;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.5em;'>&#127991;</div>";
+                    }
+                    html += "<div style='text-align:left;'><div style='font-weight:700;'>" + tName + "</div>";
+                    if(tType.length() > 0) html += "<div class='meta'>" + tType + "</div>";
+                    if(tAudio.length() > 0) html += "<div class='meta'>&#127925; " + tAudio + "</div>";
+                    html += "</div></div>";
+                    html += "<div id='td" + String(i) + "' style='display:none;text-align:left;margin-top:10px;'>";
+                    html += "<form action='/updatetag' method='GET'><input type='hidden' name='id' value='" + String(i) + "'>";
+                    html += "<div class='field'><label>Name</label><input type='text' name='name' value='" + tName + "' maxlength='39' style='width:100%;box-sizing:border-box;'></div>";
+                    html += "<div class='field'><label>Tag Type</label><input type='text' name='tagtype' value='" + tType + "' maxlength='31' placeholder='e.g. Attraction, Food, Photo…' style='width:100%;box-sizing:border-box;'></div>";
+                    html += "<div class='field'><label>Theme</label><select name='theme'>";
+                    html += buildFullThemeSelectOptions(registeredTags[i].themeId);
+                    html += "</select></div>";
+                    html += "<div class='field'><label>Audio File <span style='font-weight:400;color:#888;'>(SD filename, e.g. chime.mp3)</span></label>";
+                    html += "<input type='text' name='audio' value='" + tAudio + "' maxlength='63' placeholder='Leave blank to use theme audio' style='width:100%;box-sizing:border-box;'></div>";
+                    html += "<div class='field'><label>Photo URL</label><input type='text' name='img' value='" + tImg + "' maxlength='99' placeholder='https://… or leave blank' style='width:100%;box-sizing:border-box;'></div>";
+                    html += "<div style='display:flex;gap:8px;margin-top:10px;'>";
+                    html += "<input type='submit' value='Save' class='btn-save' style='flex:1;'>";
+                    html += "<a class='btn-del' style='flex:1;text-align:center;text-decoration:none;padding:10px 0;' href='/deletetag?id=" + String(i) + "' onclick='return confirm(\"Delete this tag?\")'>Delete</a>";
+                    html += "</div></form>";
+                    html += "</div></div>"; // td + card
+                }
+            }
+            html += "</div></div>"; // tagsBody + tags card
+            html += "<div class='card' style='text-align:left;'>";
+            html += "<div style='display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;'>";
+            html += "<div style='display:flex;align-items:center;gap:12px;'>";
+            // wand + sparkles icon
+            html += "<svg width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='flex-shrink:0;'><path d='M15 4V2'/><path d='M15 16v-2'/><path d='M8 9h2'/><path d='M20 9h2'/><path d='M17.8 11.8 19 13'/><path d='M15 9h.01'/><path d='M17.8 6.2 19 5'/><path d='m3 21 9-9'/><path d='M12.2 6.2 11 5'/></svg>";
+            html += "<div>";
+            html += "<div style='font-weight:800;color:#1a237e;font-size:1em;'>Theme Builder</div>";
+            html += "<div class='meta' style='margin-top:2px;'>Create custom LED patterns with your own colours &amp; audio.</div>";
+            html += "</div>";
+            html += "</div>";
+            html += "<a class='btn-secondary' style='text-decoration:none;white-space:nowrap;' href='/themes'>Open Theme Builder</a>";
+            html += "</div>";
+            html += "</div>";
+
+            // SETTINGS (collapsible)
+            html += "<div class='card'>";
+            html += "<div class='settings-header' id='hdrSettings' onclick='toggleSettings()'><span class='sh-icon'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>Settings</span><svg class='sh-chevron' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></div>";
+            html += "<div class='settings-body' id='settings'>";
+
+            // SD CARD STORAGE
+            html += "<hr><h3>SD Card Storage</h3>";
+            if(isSDReady) {
+                uint64_t cardBytes  = SD_MMC.cardSize();          // physical card size
+                uint64_t usedBytes  = SD_MMC.usedBytes();         // FAT filesystem used
+                uint64_t freeBytes  = cardBytes > usedBytes ? cardBytes - usedBytes : 0;
+                uint64_t totalMB    = cardBytes  / (1024ULL * 1024ULL);
+                uint64_t usedMB     = usedBytes  / (1024ULL * 1024ULL);
+                uint64_t freeMB     = freeBytes  / (1024ULL * 1024ULL);
+                int      usedPct    = (cardBytes > 0) ? (int)((usedBytes * 100ULL) / cardBytes) : 0;
+                // Show GB if >=1000 MB, otherwise MB
+                auto fmtSize = [](uint64_t mb) -> String {
+                    if(mb >= 1000) { return String((float)mb / 1024.0f, 1) + " GB"; }
+                    return String((uint32_t)mb) + " MB";
+                };
+                html += "<div class='meta' style='margin-bottom:8px;'>" + fmtSize(usedMB) + " used of " + fmtSize(totalMB) + " &mdash; <b>" + fmtSize(freeMB) + " free</b></div>";
+                html += "<div style='background:#e0e4ff;border-radius:8px;height:10px;overflow:hidden;margin:4px 0 6px;'>";
+                html += "<div style='background:#5765f2;height:100%;width:" + String(usedPct) + "%;border-radius:8px;transition:width 0.3s;'></div>";
+                html += "</div>";
+                html += "<div class='meta'>" + String(usedPct) + "% used</div>";
+            } else {
+                html += "<div class='meta' style='color:#c62828;'>SD card not detected.</div>";
+            }
+
+            // WI-FI SETTINGS
+            html += "<hr><h3>Wi-Fi Settings</h3>";
+            // Status row + restart button
+            html += "<div class='meta' style='margin-bottom:10px;'>Connected to: <b>" + htmlEscape(String(WiFi.SSID())) + "</b><br>" + WiFi.localIP().toString() + "</div>";
+            // Collapsible change-network form
+            html += "<div style='border:1px solid #e0e4ff;border-radius:10px;overflow:hidden;'>";
+            html += "<div id='wifiHdr' onclick='toggleWifi()' style='cursor:pointer;padding:12px 16px;font-weight:700;color:#1a237e;font-size:0.93em;display:flex;align-items:center;justify-content:space-between;user-select:none;background:#f8f9ff;'>";
+            html += "<span>Change Wi-Fi Network</span><svg id='wifiChevron' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='#5765f2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' style='transition:transform 0.2s;'><polyline points='9 18 15 12 9 6'/></svg>";
+            html += "</div>";
+            html += "<div id='wifiBody' style='display:none;padding:14px 16px;'>";
+            html += "<div class='meta' style='margin-bottom:10px;'>Scan to see available networks, or type an SSID manually if the network is hidden.</div>";
+            // Scan row
+            html += "<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;'>";
+            html += "<button type='button' class='btn-secondary' onclick='wifiScan()' id='wifiScanBtn'>Scan for Networks</button>";
+            html += "<span id='wifiScanStatus' class='meta' style='display:none;'>Scanning...</span>";
+            html += "</div>";
+            // SSID select (hidden until scan results arrive) + manual input
+            html += "<div id='wifiNetworkRow' style='display:none;margin-bottom:8px;'>";
+            html += "<label style='display:block;font-size:0.85em;font-weight:600;margin-bottom:4px;color:#444;'>Select a network</label>";
+            html += "<select id='wifiNetworkSelect' onchange='wifiSelectChanged()' style='width:100%;'></select>";
+            html += "</div>";
+            html += "<div id='wifiManualRow' style='margin-bottom:8px;'>";
+            html += "<label style='display:block;font-size:0.85em;font-weight:600;margin-bottom:4px;color:#444;'>SSID</label>";
+            html += "<input type='text' id='wifiSsidInput' placeholder='Network name' style='width:100%;box-sizing:border-box;'>";
+            html += "</div>";
+            html += "<div class='field' style='margin-bottom:12px;'><label>Password</label><input type='password' id='wifiPassInput' placeholder='Leave blank if open'></div>";
+            html += "<button type='button' class='btn-secondary' onclick='wifiSave()' style='margin-right:8px;'>Save &amp; Connect</button>";
+            html += "</div></div>"; // wifiBody + collapsible wrapper
+            // WiFi JS
+            html += "<script>";
+            html += "function toggleWifi(){var b=document.getElementById('wifiBody'),c=document.getElementById('wifiChevron');if(!b)return;var o=b.style.display==='none';b.style.display=o?'block':'none';if(c)c.style.transform=o?'rotate(90deg)':'rotate(0deg)';}";
+            html += "var __wifiPoll=null;";
+            html += "function wifiScan(){";
+            html += "  var st=document.getElementById('wifiScanStatus'),btn=document.getElementById('wifiScanBtn');";
+            html += "  if(st){st.style.display='inline';st.textContent='Scanning...';}";
+            html += "  if(btn) btn.disabled=true;";
+            html += "  fetch('/wifi_scan').then(function(){";
+            html += "    __wifiPoll=setInterval(function(){";
+            html += "      fetch('/wifi_scan_results').then(r=>r.json()).then(function(d){";
+            html += "        if(!d||d.state==='scanning') return;";
+            html += "        clearInterval(__wifiPoll);";
+            html += "        if(st){st.style.display='none';}";
+            html += "        if(btn) btn.disabled=false;";
+            html += "        var sel=document.getElementById('wifiNetworkSelect');";
+            html += "        var row=document.getElementById('wifiNetworkRow');";
+            html += "        var manRow=document.getElementById('wifiManualRow');";
+            html += "        if(!sel||!row) return;";
+            html += "        sel.innerHTML='';";
+            html += "        (d.networks||[]).forEach(function(n){";
+            html += "          var opt=document.createElement('option');";
+            html += "          opt.value=n.ssid; opt.textContent=n.ssid+(n.enc?' [secured]':'');";
+            html += "          sel.appendChild(opt);";
+            html += "        });";
+            html += "        var manual=document.createElement('option');";
+            html += "        manual.value='__manual__'; manual.textContent='Enter manually...';";
+            html += "        sel.appendChild(manual);";
+            html += "        row.style.display='block';";
+            html += "        wifiSelectChanged();";
+            html += "      }).catch(function(){clearInterval(__wifiPoll);if(btn)btn.disabled=false;if(st)st.style.display='none';});";
+            html += "    },1200);";
+            html += "  }).catch(function(){if(btn)btn.disabled=false;if(st)st.style.display='none';});";
+            html += "}";
+            html += "function wifiSelectChanged(){";
+            html += "  var sel=document.getElementById('wifiNetworkSelect');";
+            html += "  var manRow=document.getElementById('wifiManualRow');";
+            html += "  var inp=document.getElementById('wifiSsidInput');";
+            html += "  if(!sel||!manRow||!inp) return;";
+            html += "  if(sel.value==='__manual__'){ manRow.style.display='block'; inp.value=''; inp.focus(); }";
+            html += "  else { manRow.style.display='none'; inp.value=sel.value; }";
+            html += "}";
+            html += "function wifiSave(){";
+            html += "  var ssid=document.getElementById('wifiSsidInput').value.trim();";
+            html += "  var pass=document.getElementById('wifiPassInput').value;";
+            html += "  if(!ssid){ alert('Please enter or select an SSID.'); return; }";
+            html += "  if(!confirm('Connect to \"'+ssid+'\" and restart the hub?')) return;";
+            html += "  window.location='/setwifi?ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass);";
+            html += "}";
+            html += "</script>";
 
             // BACKUP / RESTORE
             html += "<hr><h3>Backup / Restore</h3>";
-            html += "<div class='meta' style='margin-bottom:10px;'>Export your bands before flashing new firmware. Import restores bands + owners + locations + hub timeouts.</div>";
+            html += "<div class='meta' style='margin-bottom:10px;'>Export your bands before flashing new firmware. Import restores bands, owners, locations and settings.</div>";
             html += "<a class='btn-secondary' style='text-align:center;text-decoration:none;margin-top:8px;' href='/export' download>Export Backup (JSON)</a>";
-            html += "<hr><form action='/import' method='POST'>";
-            html += "<div class='field'><label>Import Backup JSON</label>";
-            html += "<textarea name='data' style='width:100%;min-height:140px;padding:10px;border-radius:8px;border:1px solid #ccc;font-size:14px;' placeholder='Paste exported JSON here...'></textarea>";
+            html += "<hr>";
+            html += "<form id='importForm' action='/import' method='POST' style='margin-top:8px;'>";
+            html += "<input type='hidden' id='importData' name='data'>";
+            html += "<div class='field'>";
+            html += "<label>Import Backup JSON</label>";
+            html += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;'>";
+            html += "<label class='btn-secondary' style='cursor:pointer;text-decoration:none;margin:0;'>";
+            html += "Choose File<input type='file' id='importFile' accept='.json,application/json' style='display:none;' onchange='importFileChosen(this)'>";
+            html += "</label>";
+            html += "<span id='importFileName' class='meta'>No file chosen</span>";
             html += "</div>";
-            html += "<input type='submit' class='btn-save' value='Import Backup' onclick='return confirm(\"Import will overwrite all stored bands. Continue?\")'>";
+            html += "<div id='importStatus' class='meta' style='margin-top:6px;display:none;'></div>";
+            html += "</div>";
+            html += "<button type='button' id='importBtn' class='btn-save' style='margin-top:4px;width:100%;' disabled onclick='doImport()'>Import Backup</button>";
             html += "</form>";
+            html += "<script>";
+            html += "function importFileChosen(inp){";
+            html += "  if(!inp.files||!inp.files[0]) return;";
+            html += "  var f=inp.files[0];";
+            html += "  document.getElementById('importFileName').textContent=f.name;";
+            html += "  var st=document.getElementById('importStatus');";
+            html += "  st.style.display='inline'; st.textContent='Reading...';";
+            html += "  var r=new FileReader();";
+            html += "  r.onload=function(e){";
+            html += "    document.getElementById('importData').value=e.target.result;";
+            html += "    document.getElementById('importBtn').disabled=false;";
+            html += "    st.textContent='Ready to import.';";
+            html += "  };";
+            html += "  r.onerror=function(){ st.textContent='Could not read file.'; };";
+            html += "  r.readAsText(f);";
+            html += "}";
+            html += "function doImport(){";
+            html += "  var data=document.getElementById('importData').value;";
+            html += "  if(!data||data.length<20||data.indexOf('\\\"bands\\\"|bands')<0){";
+            html += "    if(!confirm('Import will overwrite all stored bands. Continue?')) return;";
+            html += "  } else {";
+            html += "    if(!confirm('Import will overwrite all stored bands. Continue?')) return;";
+            html += "  }";
+            html += "  document.getElementById('importForm').submit();";
+            html += "}";
+            html += "</script>";
 
-            html += "</div></div>";
-        }
+            html += "<hr>";
+            html += "<div style='text-align:right;'>";
+            html += "<a class='btn-secondary' href='/reboot' style='white-space:nowrap;text-decoration:none;' onclick='return confirm(\"Restart the hub now?\")'>Restart Hub</a>";
+            html += "</div>";
+
+            html += "</div></div>"; // settings body + card
+
         html += "</div>"; // container
         html += "</body></html>";
         request->send(200, "text/html; charset=utf-8", html);
@@ -1295,12 +1649,18 @@ void initWebServer() {
             if(String(uidBuf).length() == 0 && String(typeBuf).length() == 0) state = "armed";
         }
 
-        int kidx = web_scan_known_index();
+        int kidx    = web_scan_known_index();
+        int tagIdx  = web_scan_tag_index();
 
-        String name = "";
-        String img  = "";
-        String type = String(typeBuf);
-        if(state == "known" && kidx >= 0 && kidx < bandCount) {
+        String name    = "";
+        String img     = "";
+        String type    = String(typeBuf);
+        String tagType = "";
+        if(state == "known" && tagIdx >= 0 && tagIdx < tagCount) {
+            name    = String(registeredTags[tagIdx].name);
+            img     = String(registeredTags[tagIdx].imageUrl);
+            tagType = String(registeredTags[tagIdx].tagType);
+        } else if(state == "known" && kidx >= 0 && kidx < bandCount) {
             name = String(registeredBands[kidx].name);
             img  = String(registeredBands[kidx].imageUrl);
             type = String(registeredBands[kidx].type);
@@ -1311,7 +1671,9 @@ void initWebServer() {
         json += "\"uid\":\"" + jsonEscape(String(uidBuf)) + "\",";
         json += "\"type\":\"" + jsonEscape(type) + "\",";
         json += "\"knownIndex\":" + String(kidx) + ",";
+        json += "\"tagIndex\":" + String(tagIdx) + ",";
         json += "\"name\":\"" + jsonEscape(name) + "\",";
+        json += "\"tagType\":\"" + jsonEscape(tagType) + "\",";
         json += "\"img\":\"" + jsonEscape(img) + "\",";
         json += "\"checkedOut\":" + String((kidx >= 0 && kidx < bandCount) ? (int)registeredBands[kidx].checkedOut : 0);
         json += "}";
@@ -1342,12 +1704,26 @@ void initWebServer() {
         }
     });
 
-    // ROUTE: Confirm saving a newly scanned band (yes/no)
+    // ROUTE: Confirm saving a newly scanned band (yes/no) — or as a tag (asTag=1)
     server.on("/scan_confirm", HTTP_GET, [](AsyncWebServerRequest *request){
         bool yes = false;
         if(request->hasParam("yes")) {
             String yesStr = request->getParam("yes")->value();
             yes = (yesStr == "1" || yesStr.equalsIgnoreCase("true") || yesStr.equalsIgnoreCase("yes"));
+        }
+
+        bool asTag = request->hasParam("asTag") && request->getParam("asTag")->value() == "1";
+
+        if(asTag) {
+            int newIdx = web_confirm_save_pending_tag();
+            if(request->hasParam("ajax")) {
+                String json = "{\"saved\":" + String(newIdx >= 0 ? "true" : "false") + ",\"openId\":" + String(newIdx) + "}";
+                request->send(200, "application/json", json);
+                return;
+            }
+            if(newIdx >= 0) request->redirect("/?msg=tag_saved&opentag=" + String(newIdx));
+            else            request->redirect("/?msg=scan_cancel");
+            return;
         }
 
         int newIdx = web_confirm_save_pending_new(yes);
@@ -1432,9 +1808,7 @@ void initWebServer() {
                     }
                 }
 
-                prefs.begin("mbands", false);
-                prefs.putBytes(("b" + String(id)).c_str(), &registeredBands[id], sizeof(BandRecord));
-                prefs.end();
+                saveBandsToSD();
                 fn_refresh_roller(NULL); 
             }
         }
@@ -1528,18 +1902,57 @@ void initWebServer() {
     server.on("/delete", HTTP_GET, [](AsyncWebServerRequest *request){
         if(request->hasParam("id")){
             int id = request->getParam("id")->value().toInt();
-            if(id < bandCount) {
+            if(id >= 0 && id < bandCount) {
                 for(int i = id; i < bandCount - 1; i++) registeredBands[i] = registeredBands[i+1];
                 bandCount--;
-                prefs.begin("mbands", false);
-                prefs.clear(); 
-                prefs.putInt("count", bandCount);
-                for(int i=0; i<bandCount; i++) prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
-                prefs.end();
+                saveBandsToSD();
                 fn_refresh_roller(NULL);
             }
         }
         request->redirect("/");
+    });
+
+    // ROUTE: Update an NFC tag's metadata
+    server.on("/updatetag", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasParam("id")){
+            int id = request->getParam("id")->value().toInt();
+            if(id >= 0 && id < tagCount) {
+                auto copyIfNE = [&](const char* pname, char* dst, size_t dsz) {
+                    if(!request->hasParam(pname)) return;
+                    String v = request->getParam(pname)->value(); v.trim();
+                    if(v.length() > 0) { strncpy(dst, v.c_str(), dsz-1); dst[dsz-1]='\0'; }
+                };
+                copyIfNE("name",    registeredTags[id].name,      sizeof(registeredTags[id].name));
+                copyIfNE("tagtype", registeredTags[id].tagType,    sizeof(registeredTags[id].tagType));
+                copyIfNE("audio",   registeredTags[id].audioFile,  sizeof(registeredTags[id].audioFile));
+                copyIfNE("img",     registeredTags[id].imageUrl,   sizeof(registeredTags[id].imageUrl));
+                if(request->hasParam("theme")) {
+                    int tid = request->getParam("theme")->value().toInt();
+                    if(tid < 0) tid = 0;
+                    bool ok = ((uint16_t)tid < (uint16_t)kThemeCount) || (findCustomTheme((uint16_t)tid) >= 0) || tid == 0;
+                    if(ok) registeredTags[id].themeId = (uint16_t)tid;
+                }
+                // Allow clearing audio by passing audio=__clear__
+                if(request->hasParam("audio") && request->getParam("audio")->value() == "__clear__")
+                    registeredTags[id].audioFile[0] = '\0';
+                saveTagsToSD();
+            }
+        }
+        String oid = request->hasParam("id") ? request->getParam("id")->value() : "0";
+        request->redirect("/?msg=tag_saved&opentag=" + oid);
+    });
+
+    // ROUTE: Delete an NFC tag
+    server.on("/deletetag", HTTP_GET, [](AsyncWebServerRequest *request){
+        if(request->hasParam("id")){
+            int id = request->getParam("id")->value().toInt();
+            if(id >= 0 && id < tagCount) {
+                for(int i = id; i < tagCount - 1; i++) registeredTags[i] = registeredTags[i+1];
+                tagCount--;
+                saveTagsToSD();
+            }
+        }
+        request->redirect("/?msg=tag_deleted");
     });
 
     server.on("/setwifi", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1548,9 +1961,45 @@ void initWebServer() {
             prefs.putString("ssid", request->getParam("ssid")->value());
             prefs.putString("pass", request->hasParam("pass") ? request->getParam("pass")->value() : "");
             prefs.end();
-            request->send(200, "text/html", "Restarting...");
+            request->send(200, "text/html", "<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h2>Restarting...</h2><p>Reconnecting to new network. Re-open the hub at its new address.</p></body></html>");
             delay(2000); ESP.restart();
+        } else {
+            request->redirect("/");
         }
+    });
+
+    // ROUTE: Restart hub
+    server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "text/html", "<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h2>Restarting...</h2><p>The hub will be back shortly.</p></body></html>");
+        delay(1500); ESP.restart();
+    });
+
+    // ROUTE: Start async WiFi scan
+    server.on("/wifi_scan", HTTP_GET, [](AsyncWebServerRequest *request){
+        WiFi.scanNetworks(true); // async, non-blocking
+        request->send(200, "application/json", "{\"state\":\"scanning\"}");
+    });
+
+    // ROUTE: Poll WiFi scan results
+    server.on("/wifi_scan_results", HTTP_GET, [](AsyncWebServerRequest *request){
+        int16_t n = WiFi.scanComplete();
+        if(n == WIFI_SCAN_RUNNING) {
+            request->send(200, "application/json", "{\"state\":\"scanning\"}");
+            return;
+        }
+        if(n < 0) {
+            request->send(200, "application/json", "{\"state\":\"done\",\"networks\":[]}");
+            WiFi.scanDelete();
+            return;
+        }
+        String json = "{\"state\":\"done\",\"networks\":[";
+        for(int16_t i = 0; i < n; i++) {
+            if(i > 0) json += ",";
+            json += "{\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + ",\"enc\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? 1 : 0) + "}";
+        }
+        json += "]}";
+        WiFi.scanDelete();
+        request->send(200, "application/json", json);
     });
 
     // ROUTE: Delete Category
@@ -1629,91 +2078,7 @@ void initWebServer() {
 
     // ROUTE: Export backup JSON bands + owners + locations + hub settings
     server.on("/export", HTTP_GET, [](AsyncWebServerRequest *request){
-        String json = "{";
-        json += "\"version\":1,";
-        json += "\"bandCount\":" + String(bandCount) + ",";
-        json += "\"bands\":[";
-
-        for(int i = 0; i < bandCount; i++) {
-            // UID string
-            char uidBuf[32] = {0};
-            formatUidString(registeredBands[i].uid, 7, uidBuf, sizeof(uidBuf));
-
-            if(i > 0) json += ",";
-
-            json += "{";
-            json += "\"uid\":\"" + jsonEscape(String(uidBuf)) + "\",";
-            json += "\"name\":\"" + jsonEscape(String(registeredBands[i].name)) + "\",";
-            json += "\"type\":\"" + jsonEscape(String(registeredBands[i].type)) + "\",";
-            json += "\"owner\":\"" + jsonEscape(String(registeredBands[i].owner)) + "\",";
-            json += "\"location\":\"" + jsonEscape(String(registeredBands[i].location)) + "\",";
-            json += "\"dateBought\":\"" + jsonEscape(String(registeredBands[i].dateBought)) + "\",";
-            json += "\"color\":" + String((unsigned int)registeredBands[i].color) + ",";
-            json += "\"themeId\":" + String((unsigned int)registeredBands[i].themeId) + ",";
-
-            json += "\"imageUrl\":\"" + jsonEscape(String(registeredBands[i].imageUrl)) + "\",";
-            json += "\"mbcListing\":\"" + jsonEscape(String(registeredBands[i].mbcListing)) + "\",";
-            json += "\"releaseType\":\"" + jsonEscape(String(registeredBands[i].releaseType)) + "\",";
-            json += "\"releaseDate\":\"" + jsonEscape(String(registeredBands[i].releaseDate)) + "\",";
-            json += "\"releasedAt\":\"" + jsonEscape(String(registeredBands[i].releasedAt)) + "\",";
-            json += "\"bandColorName\":\"" + jsonEscape(String(registeredBands[i].bandColorName)) + "\",";
-            json += "\"iconColorName\":\"" + jsonEscape(String(registeredBands[i].iconColorName)) + "\",";
-            json += "\"originalPrice\":\"" + jsonEscape(String(registeredBands[i].originalPrice)) + "\",";
-            json += "\"sku\":\"" + jsonEscape(String(registeredBands[i].sku)) + "\"";
-            json += "}";
-        }
-
-        json += "],";
-
-        // Owners/Locations arrays
-        json += "\"owners\":[";
-        bool first = true;
-        for(int i = 0; i < 10; i++) {
-            if(ownersList[i][0] == '\0') continue;
-            if(!first) json += ",";
-            first = false;
-            json += "\"" + jsonEscape(String(ownersList[i])) + "\"";
-        }
-        json += "],";
-
-        json += "\"locations\":[";
-        first = true;
-        for(int i = 0; i < 10; i++) {
-            if(locationsList[i][0] == '\0') continue;
-            if(!first) json += ",";
-            first = false;
-            json += "\"" + jsonEscape(String(locationsList[i])) + "\"";
-        }
-        json += "],";
-
-        json += "\"settings\":{";
-        json += "\"idleTimeout\":" + String((unsigned int)idleTimeout) + ",";
-        json += "\"sleepTimeout\":" + String((unsigned int)sleepTimeout);
-        json += "},";
-
-        // Custom themes
-        json += "\"customThemes\":[";
-        for (int i = 0; i < customThemeCount; i++) {
-            if (i > 0) json += ",";
-            json += "{";
-            json += "\"id\":" + String((unsigned int)customThemes[i].id) + ",";
-            json += "\"name\":\"" + jsonEscape(String(customThemes[i].name)) + "\",";
-            json += "\"phases\":" + String((unsigned int)customThemes[i].phases) + ",";
-            json += "\"loop\":" + String((unsigned int)customThemes[i].loopPattern) + ",";
-            json += "\"colors\":[";
-            for (uint8_t ci = 0; ci < customThemes[i].colorCount && ci < CUSTOM_THEME_MAX_COLORS; ci++) {
-                if (ci > 0) json += ",";
-                json += String((unsigned int)customThemes[i].colors[ci]);
-            }
-            json += "],";
-            json += "\"audioFile\":\"" + jsonEscape(String(customThemes[i].audioFile)) + "\",";
-            json += "\"lsUseColors\":" + String((unsigned int)customThemes[i].lsUseThemeColors);
-            json += "}";
-        }
-        json += "]";  // closes customThemes"
-
-        json += "}";
-
+        String json = buildBackupJson();
         AsyncWebServerResponse *resp = request->beginResponse(200, "application/json", json);
         resp->addHeader("Content-Disposition", "attachment; filename=\"magicbandhub-backup.json\"");
         request->send(resp);
@@ -1758,7 +2123,7 @@ void initWebServer() {
         // Iterate objects: naive scan for {...}
         int idx = 0;
         int imported = 0;
-        while(idx < (int)arr.length() && imported < 50) {
+        while(idx < (int)arr.length() && imported < BAND_MAX) {
             int objStart = arr.indexOf("{", idx);
             if(objStart < 0) break;
 
@@ -1868,20 +2233,52 @@ void initWebServer() {
 
         bandCount = imported;
 
-        // Persist bands + categories + settings
-        prefs.begin("mbands", false);
-        prefs.clear();
-        prefs.putInt("count", bandCount);
-        for(int i = 0; i < bandCount; i++) {
-            prefs.putBytes(("b" + String(i)).c_str(), &registeredBands[i], sizeof(BandRecord));
+        // Persist bands to SD (no NVS for band data)
+        saveBandsToSD();
+
+        // Parse and persist tags (best-effort)
+        {
+            int tagsPos = data.indexOf("\"tags\":[");
+            if (tagsPos >= 0) {
+                int tArrStart = data.indexOf("[", tagsPos);
+                int tArrEnd   = data.indexOf("]", tArrStart);
+                if (tArrStart >= 0 && tArrEnd > tArrStart) {
+                    String tArr = data.substring(tArrStart + 1, tArrEnd);
+                    int ti = 0; int tImported = 0;
+                    while (ti < (int)tArr.length() && tImported < TAG_MAX) {
+                        int os = tArr.indexOf("{", ti);
+                        if (os < 0) break;
+                        int depth = 0; int oe = -1;
+                        for (int p = os; p < (int)tArr.length(); p++) {
+                            if (tArr[p] == '{') depth++;
+                            else if (tArr[p] == '}') { depth--; if (depth == 0) { oe = p; break; } }
+                        }
+                        if (oe < 0) break;
+                        String obj = tArr.substring(os, oe + 1);
+                        TagRecord tr; memset(&tr, 0, sizeof(TagRecord));
+                        String uidStr;
+                        if (!jsonFindValueString(obj, "uid", uidStr) || !parseUidString(uidStr, tr.uid, 7)) { ti = oe + 1; continue; }
+                        String sv;
+                        if (jsonFindValueString(obj, "name",      sv)) strncpy(tr.name,      sv.c_str(), sizeof(tr.name)-1);
+                        if (jsonFindValueString(obj, "tagType",   sv)) strncpy(tr.tagType,   sv.c_str(), sizeof(tr.tagType)-1);
+                        if (jsonFindValueString(obj, "audioFile", sv)) strncpy(tr.audioFile, sv.c_str(), sizeof(tr.audioFile)-1);
+                        if (jsonFindValueString(obj, "imageUrl",  sv)) strncpy(tr.imageUrl,  sv.c_str(), sizeof(tr.imageUrl)-1);
+                        int tid = 0; jsonFindValueInt(obj, "themeId", tid);
+                        tr.themeId = (uint16_t)tid;
+                        registeredTags[tImported++] = tr;
+                        ti = oe + 1;
+                    }
+                    tagCount = tImported;
+                    saveTagsToSD();
+                }
+            }
         }
 
-        // Write owners/locations into o0.. / l0.. keys (compact)
+        // Owners/locations + settings go to NVS (bands/tags are on SD now)
+        prefs.begin("mbands", false);
         for(int i = 0; i < 10; i++) {
-            String ok = "o" + String(i);
-            String lk = "l" + String(i);
-            if(ownersTmp[i].length() > 0) prefs.putString(ok.c_str(), ownersTmp[i]);
-            if(locationsTmp[i].length() > 0) prefs.putString(lk.c_str(), locationsTmp[i]);
+            if(ownersTmp[i].length() > 0)    prefs.putString(("o" + String(i)).c_str(), ownersTmp[i]);
+            if(locationsTmp[i].length() > 0) prefs.putString(("l" + String(i)).c_str(), locationsTmp[i]);
         }
         prefs.end();
 
@@ -2584,7 +2981,7 @@ void initWebServer() {
         html += "  var np=document.getElementById('nowPlaying');";
         html += "  var sb=document.getElementById('statusBar');";
         html += "  var pp=document.getElementById('btnPlayPause');";
-        html += "  if(np) np.textContent=d.track||'Not playing';";
+        html += "  if(np){ if(d.title&&d.title!='') np.innerHTML=(d.artist&&d.artist!=''?'<b>'+d.title+'</b> &mdash; '+d.artist:'<b>'+d.title+'</b>'); else np.textContent=d.track||'Not playing'; }";
         html += "  if(sb) sb.textContent=d.playing?(d.paused?'Paused':'Playing'):'Stopped';";
         html += "  if(pp) pp.innerHTML=d.paused?'&#9654; Resume':(d.playing?'&#9646;&#9646; Pause':'&#9654; Play');";
         html += "  var tl=document.getElementById('trackList');";
@@ -2802,6 +3199,8 @@ void initWebServer() {
         resp += ",\"paused\":"  + String(g_playerPaused?"true":"false");
         resp += ",\"idx\":"     + String(g_playerIndex);
         resp += ",\"track\":\"" + jsonEscape(name) + "\"";
+        resp += ",\"title\":\"" + jsonEscape(String(g_playerTitle))  + "\"";
+        resp += ",\"artist\":\""+ jsonEscape(String(g_playerArtist)) + "\"";
         resp += ",\"vol\":"     + String((int)g_volume);
         resp += ",\"lightshow\":" + String((int)g_playerLightshow);
         resp += ",\"speed\":"     + String((int)g_playerLsSpeed);

@@ -69,10 +69,35 @@ struct BandRecord {
     uint8_t checkedOut;     // 1 = packed/checked-out, 0 = at home
 };
 
+// ---- NFC Tag record (lighter-weight than BandRecord) ----
+#define BAND_MAX 150
+#define TAG_MAX  60
+struct TagRecord {
+    uint8_t  uid[7];
+    char     name[40];
+    uint16_t themeId;       // 0 = default chime, 100+ = custom theme
+    char     audioFile[64]; // track on SD root to play directly (ignored if themeId != 0)
+    char     tagType[32];   // user label e.g. "Attraction", "Food", "Photo"
+    char     imageUrl[100]; // URL or SD path to a photo
+};
+
+extern TagRecord registeredTags[];
+extern int tagCount;
+
 void initWebServer();
 bool tryConnectSavedWiFi();
+String buildBackupJson(); // build full export JSON; used by /export and OTA pre-flash backup
 void loadCustomThemesFromPrefs();
 int  findCustomTheme(uint16_t themeId); // returns index in customThemes[] or -1
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void saveBandsToSD(); // write registeredBands[] to /bands.bin on SD
+void saveTagsToSD();  // write registeredTags[]  to /tags.bin  on SD
+#ifdef __cplusplus
+}
+#endif
 
 extern CustomTheme customThemes[];
 extern int customThemeCount;
@@ -88,6 +113,9 @@ extern uint8_t     g_playerLightshow;
 extern uint8_t     g_playerLsSpeed;
 extern bool        g_playerRepeat;
 extern bool        g_playerRepeatOne;
+// ID3 metadata for currently playing track
+extern char g_playerTitle[128];
+extern char g_playerArtist[128];
 // Colour override for player lightshow — set when a theme with lsUseThemeColors=1 triggers
 extern bool        g_playerLsUseThemeColors;
 extern uint32_t    g_playerLsThemeColors[5];  // NeoPixel-packed WRGB

@@ -26,9 +26,9 @@ void SD_Init() {
   if(cardType == CARD_NONE){
     Serial.println("No SD card attached");
   } else {
-    uint64_t totalBytes = SD_MMC.totalBytes();
-    SDCard_Size = totalBytes/(1024*1024);
-    Serial.printf("SD Card Size: %u MB\n", SDCard_Size);
+    uint64_t cardBytes = SD_MMC.cardSize();
+    SDCard_Size = (uint16_t)min((uint64_t)65535ULL, cardBytes / (1024ULL * 1024ULL));
+    Serial.printf("SD Card Size: %llu MB\n", cardBytes / (1024ULL * 1024ULL));
   }
 }
 

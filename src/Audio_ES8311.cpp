@@ -69,6 +69,11 @@ void Audio_SetMute(bool mute) {
 // AsyncWebServer FreeRTOS task; concurrent audio.loop() calls from two tasks corrupt
 // the MP3 decoder's internal state and cause an assert crash.
 bool Audio_ConnectToFS(fs::FS &fs, const char* path) {
+    // Clear stale ID3 metadata before starting a new track
+    extern char g_playerTitle[128];
+    extern char g_playerArtist[128];
+    g_playerTitle[0]  = '\0';
+    g_playerArtist[0] = '\0';
     Audio_SetMute(true);
     bool ok = audio.connecttoFS(fs, path);
     if (ok) {
