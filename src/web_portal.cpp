@@ -841,21 +841,98 @@ void initWebServer() {
         html += "</style>";
         
         // SEARCH FILTER SCRIPT
-        html += "<script>function filterBands() { var val = document.getElementById('search').value.toLowerCase();";
-        html += "var owner = document.getElementById('fOwner').value;";
-        html += "var loc   = document.getElementById('fLoc').value;";
-        html += "var cards = document.getElementsByClassName('band-card');";
-        html += "for (var i=0; i<cards.length; i++) { var txt = cards[i].innerText.toLowerCase();";
-        html += "var od = cards[i].getAttribute('data-owner')||'';";
-        html += "var ld = cards[i].getAttribute('data-loc')||'';";
-        html += "var okTxt   = !val   || txt.includes(val);";
-        html += "var okOwner = !owner || od === owner;";
-        html += "var okLoc   = !loc   || ld === loc;";
-        html += "var show = okTxt && okOwner && okLoc;";
-        html += "cards[i].style.display = show ? 'block' : 'none';";
-        // also hide corresponding tile
-        html += "var tile=document.getElementById('tile'+cards[i].getAttribute('data-idx'));";
-        html += "if(tile) tile.style.display = show ? 'block' : 'none'; }}";
+        html += "<script>";
+        // ---- Band rendering engine ----
+        html += "var __PAGE_SIZE=30;";
+        html += "var __curPage=0;";
+        html += "var __filteredIdx=[];"; // indices into __bandData that pass current filter+sort
+        // Comparison helper operates on __bandData indices
+        html += "function __parseRd(s){ if(!s) return 0; var d=new Date(s); return isNaN(d.getTime())?0:d.getTime(); }";
+        html += "function __cmpIdx(a,b,key){";
+        html += "  var dir=key.endsWith('-desc')?-1:1;";
+        html += "  var field=key.replace(/-asc$/,'').replace(/-desc$/,'');";
+        html += "  var da=window.__bandData[a], db=window.__bandData[b];";
+        html += "  if(field==='reg'){ return dir*(a-b); }";
+        html += "  if(field==='alpha'){ var av=(da.name||'').toLowerCase(),bv=(db.name||'').toLowerCase(); if(av<bv)return -dir; if(av>bv)return dir; return 0; }";
+        html += "  if(field==='bought'){ var av=da.bought||'',bv=db.bought||''; if(av<bv)return -dir; if(av>bv)return dir; return 0; }";
+        html += "  if(field==='rdate'){ return dir*(__parseRd(da.rdate)-__parseRd(db.rdate)); }";
+        html += "  return 0;";
+        html += "}";
+        // Build filtered+sorted index array
+        html += "function __buildIdx(){";
+        html += "  var val=(document.getElementById('search')||{value:''}).value.toLowerCase();";
+        html += "  var owner=(document.getElementById('fOwner')||{value:''}).value;";
+        html += "  var loc=(document.getElementById('fLoc')||{value:''}).value;";
+        html += "  var key=(document.getElementById('fSort')||{value:'reg-asc'}).value;";
+        html += "  var out=[];";
+        html += "  for(var i=0;i<window.__bandData.length;i++){";
+        html += "    var d=window.__bandData[i];";
+        html += "    if(d.checkedOut) continue;";
+        html += "    if(owner && d.owner!==owner) continue;";
+        html += "    if(loc   && d.loc!==loc)     continue;";
+        html += "    if(val && (d.name+' '+d.type+' '+d.owner+' '+d.loc+' '+d.rtype+' '+d.bcol).toLowerCase().indexOf(val)<0) continue;";
+        html += "    out.push(i);";
+        html += "  }";
+        html += "  out.sort(function(a,b){return __cmpIdx(a,b,key);});";
+        html += "  __filteredIdx=out;";
+        html += "}";
+        // Render one summary row
+        html += "function __makeSummary(idx){ /* builds a card containing the summary header + the server-rendered edit form */";
+        html += "  var d=window.__bandData[idx];";
+        html += "  var div=document.createElement('div');";
+        html += "  div.className='card band-card';";
+        html += "  var img=d.img?'<img class=\"thumb\" src=\"'+d.img+'\">':'<div class=\"thumb\"></div>';";  // ternary is correct
+        html += "  var hdr=document.createElement('div'); hdr.className='summary'; hdr.onclick=function(){toggleDetails(idx);};";  
+        html += "  hdr.innerHTML='<div class=\"summary-left\">'+img+'<div><div><b>'+__esc(d.name)+'</b></div><div class=\"meta\">Owner: '+__esc(d.owner)+'&nbsp;|&nbsp;Location: '+__esc(d.loc)+'</div><div class=\"meta\">Type: '+__esc(d.type)+'</div></div></div><div class=\"meta\">Tap to edit</div>';";  
+        html += "  div.appendChild(hdr);";  
+        html += "  var ef=document.getElementById('d'+idx); if(ef) div.appendChild(ef);";
+        html += "  return div;";
+        html += "}";
+        // Render one tile
+        html += "function __makeTile(idx){";
+        html += "  var d=window.__bandData[idx];";
+        html += "  var div=document.createElement('div');";
+        html += "  div.className='tile';";
+        html += "  div.setAttribute('data-idx',idx);";
+        html += "  div.onclick=function(){openMeta(idx);};";
+        html += "  var inner=d.img?'<img src=\"'+d.img+'\" alt=\"\">':'<div class=\"tile-placeholder\">&#127925;</div>';";
+        html += "  inner+='<div class=\"tile-name\">'+__esc(d.name)+'</div><div class=\"tile-meta\">'+__esc(d.owner)+'</div>';";
+        html += "  div.innerHTML=inner;";
+        html += "  return div;";
+        html += "}";
+        // HTML-escape helper
+        html += "function __esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;'); }";
+        // Render current page into listSummaries and tile-grid; update pager
+        html += "function __renderPage(pg){ /* renders filtered page; returns edit forms to editStore first */";
+        html += "  __curPage=pg;";
+        html += "  var ls=document.getElementById('listSummaries');";  
+        html += "  var es=document.getElementById('editStore');";
+        html += "  var tg=document.querySelector('.tile-grid');";
+        html += "  if(!ls) return;";  
+        html += "  if(es){ var prev=ls.querySelectorAll('.details'); prev.forEach(function(d){d.style.display='none';es.appendChild(d);}); }";
+        html += "  ls.innerHTML='';";
+        html += "  if(tg) tg.innerHTML='';";
+        html += "  var start=pg*__PAGE_SIZE, end=Math.min(start+__PAGE_SIZE,__filteredIdx.length);";
+        html += "  for(var i=start;i<end;i++){";
+        html += "    ls.appendChild(__makeSummary(__filteredIdx[i]));";
+        html += "    if(tg) tg.appendChild(__makeTile(__filteredIdx[i]));";
+        html += "  }";
+        // Pager
+        html += "  var pages=Math.ceil(__filteredIdx.length/__PAGE_SIZE);";
+        html += "  var pr=document.getElementById('listPager');";
+        html += "  if(pr){";
+        html += "    if(pages<=1){ pr.innerHTML=''; }";
+        html += "    else{";
+        html += "      var h='<span style=\"font-size:0.85em;color:#555;\">Showing '+(start+1)+'\u2013'+end+' of '+__filteredIdx.length+'</span>&nbsp;';";
+        html += "      if(pg>0) h+='<button class=\"btn-secondary\" style=\"padding:4px 12px;\" onclick=\"__renderPage('+(pg-1)+')\">&#8592; Prev</button>&nbsp;';";
+        html += "      if(pg<pages-1) h+='<button class=\"btn-secondary\" style=\"padding:4px 12px;\" onclick=\"__renderPage('+(pg+1)+')\">Next &#8594;</button>';";
+        html += "      pr.innerHTML=h;";
+        html += "    }";
+        html += "  }";
+        html += "}";
+        // Public API used by filter bar / sort / search
+        html += "function filterBands(){ __buildIdx(); __renderPage(0); }";
+        html += "function sortBands(){ __buildIdx(); __renderPage(0); }";
         html += "function setView(v){";
         html += "  document.getElementById('listView').style.display = v==='list' ? 'block' : 'none';";
         html += "  document.getElementById('tileView').style.display = v==='tile' ? 'block' : 'none';";
@@ -880,41 +957,52 @@ void initWebServer() {
         html += "  document.getElementById('metaPrice').textContent=data.price||'';";
         html += "  document.getElementById('metaSku').textContent=data.sku||'';";
         html += "  document.getElementById('metaEditBtn').onclick=function(){";
-        html += "    document.getElementById('listView').style.display='block';";
-        html += "    closeMeta();";
-        html += "    toggleDetails(idx);";
-        html += "    var el=document.getElementById('d'+idx);";
-        html += "    if(el) setTimeout(function(){el.scrollIntoView({behavior:'smooth',block:'start'});},80);";
         html += "    setView('list');";
+        html += "    closeMeta();";
+        html += "    var pageOfIdx=__filteredIdx.indexOf(idx); if(pageOfIdx>=0){ var pg=Math.floor(pageOfIdx/__PAGE_SIZE); if(pg!==__curPage) __renderPage(pg); } else { __buildIdx(); var p2=__filteredIdx.indexOf(idx); if(p2>=0) __renderPage(Math.floor(p2/__PAGE_SIZE)); }";
+        html += "    toggleDetails(idx);";  
+        html += "    var el=document.getElementById('d'+idx); if(el) setTimeout(function(){el.scrollIntoView({behavior:'smooth',block:'start'});},80);";
         html += "  };";
         html += "  m.classList.add('open');";
         html += "}";
         html += "function closeMeta(){document.getElementById('metaModal').classList.remove('open');}";
-        html += "function toggleDetails(id){ var el=document.getElementById('d'+id); if(!el) return; el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none'; }";
-        html += "function parseReleaseDate(s){ if(!s) return 0; var d=new Date(s); return isNaN(d.getTime())?0:d.getTime(); }";
-        html += "function cmpBands(a,b,key){";
-        html += "  var dir=key.endsWith('-desc')?-1:1;";
-        html += "  var field=key.replace(/-asc$/,'').replace(/-desc$/,'');";
-        html += "  var av,bv;";
-        html += "  if(field==='reg'){ return dir*(parseInt(a.getAttribute('data-idx')||'0',10)-parseInt(b.getAttribute('data-idx')||'0',10)); }";
-        html += "  else if(field==='alpha'){ av=(a.getAttribute('data-name')||'').toLowerCase(); bv=(b.getAttribute('data-name')||'').toLowerCase(); }";
-        html += "  else if(field==='bought'){ av=a.getAttribute('data-bought')||''; bv=b.getAttribute('data-bought')||''; }";
-        html += "  else if(field==='rdate'){ return dir*(parseReleaseDate(a.getAttribute('data-rdate')||'')-parseReleaseDate(b.getAttribute('data-rdate')||'')); }";
-        html += "  else { av=''; bv=''; }";
-        html += "  if(av<bv) return -dir; if(av>bv) return dir; return 0;";
-        html += "}";
-        html += "function sortBands(){";
-        html += "  var key=(document.getElementById('fSort')||{value:'reg-asc'}).value;";
-        html += "  var lv=document.getElementById('listView');";
-        html += "  var cards=Array.from(lv.querySelectorAll('.band-card'));";
-        html += "  cards.sort(function(a,b){return cmpBands(a,b,key);});";
-        html += "  cards.forEach(function(c){lv.appendChild(c);});";
-        html += "  var tg=document.querySelector('.tile-grid');";
-        html += "  if(tg){ var tiles=Array.from(tg.querySelectorAll('.tile')); tiles.sort(function(a,b){return cmpBands(a,b,key);}); tiles.forEach(function(t){tg.appendChild(t);}); }";
-        html += "  filterBands();";
+        html += "function toggleDetails(id){";
+        html += "  var el=document.getElementById('d'+id); if(!el) return;";
+        html += "  el.style.display=(el.style.display==='none'||el.style.display==='')?'block':'none';";
         html += "}";
         // Auto-open band card from ?open= param on load; also handle ?opentag= for tags
-        html += "window.addEventListener('load', function(){ try{ var sv=localStorage.getItem('mbhub_view'); if(sv==='tile') setView('tile'); } catch(e){} try{ var p=new URLSearchParams(window.location.search); var open=p.get('open'); if(open!==null){ var id=parseInt(open,10); if(!isNaN(id)){ setView('list'); toggleDetails(id); var el=document.getElementById('d'+id); if(el){ el.scrollIntoView({behavior:'smooth', block:'start'}); } } } }catch(e){} try{ var p=new URLSearchParams(window.location.search); var ot=p.get('opentag'); if(ot!==null){ var id=parseInt(ot,10); if(!isNaN(id)){ var tb=document.getElementById('tagsBody'); var hdr=document.getElementById('hdrTags'); if(tb){ tb.style.display='block'; if(hdr) hdr.classList.add('open'); } var el=document.getElementById('td'+id); if(el){ el.style.display='block'; el.scrollIntoView({behavior:'smooth',block:'start'}); } } } }catch(e){} });";
+        html += "window.addEventListener('load', function(){";
+        html += "  __buildIdx(); __renderPage(0);"; // initial render
+        html += "  try{ var sv=localStorage.getItem('mbhub_view'); if(sv==='tile') setView('tile'); }catch(e){}";
+        html += "  try{";
+        html += "    var p=new URLSearchParams(window.location.search);";
+        html += "    var open=p.get('open');";
+        html += "    if(open!==null){";
+        html += "      var id=parseInt(open,10);";
+        html += "      if(!isNaN(id)){";
+        html += "        setView('list');";
+        // Make sure the band is on the rendered page
+        html += "        var pi=__filteredIdx.indexOf(id); if(pi>=0) __renderPage(Math.floor(pi/__PAGE_SIZE));";
+        html += "        toggleDetails(id);";
+        html += "        var el=document.getElementById('d'+id);";
+        html += "        if(el) el.scrollIntoView({behavior:'smooth',block:'start'});";
+        html += "      }";
+        html += "    }";
+        html += "  }catch(e){}";
+        html += "  try{";
+        html += "    var p=new URLSearchParams(window.location.search);";
+        html += "    var ot=p.get('opentag');";
+        html += "    if(ot!==null){";
+        html += "      var id=parseInt(ot,10);";
+        html += "      if(!isNaN(id)){";
+        html += "        var tb=document.getElementById('tagsBody'); var hdr=document.getElementById('hdrTags');";
+        html += "        if(tb){ tb.style.display='block'; if(hdr) hdr.classList.add('open'); }";
+        html += "        var el=document.getElementById('td'+id);";
+        html += "        if(el){ el.style.display='block'; el.scrollIntoView({behavior:'smooth',block:'start'}); }";
+        html += "      }";
+        html += "    }";
+        html += "  }catch(e){}";
+        html += "});";
         html += "function toggleSettings(){ var el=document.getElementById('settings'),hdr=document.getElementById('hdrSettings'); if(!el) return; var open=el.style.display==='none'||el.style.display===''; el.style.display=open?'block':'none'; if(hdr) hdr.classList.toggle('open',open); }";
         html += "function toggleOwnerLocs(){ var el=document.getElementById('ownerLocs'),hdr=document.getElementById('hdrOwnerLocs'); if(!el) return; var open=el.style.display==='none'||el.style.display===''; el.style.display=open?'block':'none'; if(hdr) hdr.classList.toggle('open',open); }";
         html += "function toggleTags(){ var el=document.getElementById('tagsBody'),hdr=document.getElementById('hdrTags'); if(!el) return; var open=el.style.display==='none'||el.style.display===''; el.style.display=open?'block':'none'; if(hdr) hdr.classList.toggle('open',open); }";
@@ -1101,7 +1189,7 @@ void initWebServer() {
             html += "<input type='text' id='search' oninput='filterBands()' placeholder='Search by name, type\u2026' style='width:100%; box-sizing:border-box;'>";
             html += "</div>";
 
-            // BAND JS DATA (for metadata modal)
+            // BAND JS DATA — full records; tiles + summary rows are JS-rendered for performance
             html += "<script>window.__bandData=[";
             for(int i=0; i < bandCount; i++) {
                 auto &b = registeredBands[i];
@@ -1117,36 +1205,15 @@ void initWebServer() {
                 String jPrice = jsonEscape(String(b.originalPrice));
                 String jSku   = jsonEscape(String(b.sku));
                 String jBought = jsonEscape(String(b.dateBought));
+                char hStr[8]; sprintf(hStr, "#%06X", (unsigned int)b.color);
                 html += "{\"img\":\"" + jImg + "\",\"name\":\"" + jName + "\",\"owner\":\"" + jOwner + "\",\"loc\":\"" + jLoc + "\",\"type\":\"" + jType + "\",\"rtype\":\"" + jRtype + "\",\"rdate\":\"" + jRdate + "\",\"bought\":\"" + jBought + "\",\"bcol\":\"" + jBcol + "\",\"icol\":\"" + jIcol + "\",\"price\":\"" + jPrice + "\",\"sku\":\"" + jSku + "\",\"checkedOut\":" + String((int)b.checkedOut) + "}";
                 if(i < bandCount - 1) html += ",";
             }
-            html += "];</script>";
-
-            // TILE VIEW
-            html += "<div id='tileView' style='display:none;'>";
-            html += "<div class='card'><div class='tile-grid'>";
-            for(int i=0; i < bandCount; i++) {
-                auto &b = registeredBands[i];
-                if(b.checkedOut) continue; // shown in Packed section
-                String escImg  = htmlEscape(String(b.imageUrl));
-                String escName = htmlEscape(String(b.name));
-                String escOwner = htmlEscape(strlen(b.owner)>0 ? String(b.owner) : "None");
-                String escLoc   = htmlEscape(strlen(b.location)>0 ? String(b.location) : "None");
-                String escTName  = htmlEscape(String(b.name));
-                String escTBought = htmlEscape(String(b.dateBought));
-                String escTRdate  = htmlEscape(String(b.releaseDate));
-                html += "<div id='tile" + String(i) + "' class='tile' onclick='openMeta(" + String(i) + ")' data-owner='" + escOwner + "' data-loc='" + escLoc + "' data-idx='" + String(i) + "' data-name='" + escTName + "' data-bought='" + escTBought + "' data-rdate='" + escTRdate + "'>";
-                if(strlen(b.imageUrl) > 5) {
-                    html += "<img src='" + escImg + "' alt=''>";
-                } else {
-                    html += "<div class='tile-placeholder'>&#127925;</div>";
-                }
-                html += "<div class='tile-name'>" + escName + "</div>";
-                html += "<div class='tile-meta'>" + escOwner + "</div>";
-                html += "</div>";
-            }
-            html += "</div></div></div>";
-
+            html += "];";
+            // Tile view container (static)
+            html += "var __tileGrid=document.querySelector('.tile-grid');";  
+            html += "</script>";
+            html += "<div id='tileView' style='display:none'><div class='card'><div class='tile-grid'></div></div></div>";
             // METADATA MODAL
             html += "<div class='modal-overlay' id='metaModal' onclick='if(event.target===this)closeMeta()'>";
             html += "<div class='modal'>";
@@ -1165,8 +1232,10 @@ void initWebServer() {
             html += "<button id='metaEditBtn' class='btn-secondary' style='margin-top:16px;'>Edit this band</button>";
             html += "</div></div>";
 
-            // LIST VIEW wrapper open
+            // LIST VIEW wrapper — summaries div inside; edit forms in #editStore
             html += "<div id='listView'>";
+            html += "<div id='listSummaries'></div>"; // JS renders band cards here
+            html += "<div id='listPager' style='text-align:center;margin:6px 0 4px;'></div>";
 
             // CHECKED-OUT / PACKED SECTION
             {
@@ -1200,9 +1269,11 @@ void initWebServer() {
                 }
             }
 
-            // BAND CARDS (summary + expandable details)
+            // EDIT FORM STORE — hidden; JS pulls each #d{i} into the summary card when rendered
+            html += "</div>"; // #listView
+            html += "<div id='editStore' style='display:none'>";
 
-            // BAND CARDS (summary + expandable details)
+            // EDIT FORM DIVS (server-rendered; summaries are JS-rendered separately)
             for(int i=0; i < bandCount; i++) {
                 if(registeredBands[i].checkedOut) continue; // shown in Packed section
                 char hStr[8]; sprintf(hStr, "#%06X", (unsigned int)registeredBands[i].color);
@@ -1222,28 +1293,10 @@ void initWebServer() {
                 String escIcol  = htmlEscape(String(registeredBands[i].iconColorName));
                 String escOp    = htmlEscape(String(registeredBands[i].originalPrice));
                 String escSku   = htmlEscape(String(registeredBands[i].sku));
-
                 String escBought = htmlEscape(String(registeredBands[i].dateBought));
                 String escRdate2 = htmlEscape(String(registeredBands[i].releaseDate));
-                html += "<div class='card band-card' data-owner='" + escOwner + "' data-loc='" + escLoc + "' data-idx='" + String(i) + "' data-name='" + escName + "' data-bought='" + escBought + "' data-rdate='" + escRdate2 + "'>";
 
-                // Summary header (click to expand)
-                html += "<div class='summary' onclick='toggleDetails(" + String(i) + ")'>";
-                html += "<div class='summary-left'>";
-                if(strlen(registeredBands[i].imageUrl) > 5) {
-                    html += "<img class='thumb' src='" + escImg + "'>";
-                } else {
-                    html += "<div class='thumb'></div>";
-                }
-                html += "<div>";
-                html += "<div><b>" + escName + "</b></div>";
-                html += "<div class='meta'>Owner: " + escOwner + " &nbsp;|&nbsp; Location: " + escLoc + "</div>";
-                html += "<div class='meta'>Type: " + escType + "</div>";
-                html += "</div></div>";
-                html += "<div class='meta'>Tap to edit</div>";
-                html += "</div>";
-
-                // Expandable details
+                // Expandable details (hidden; JS summary header reveals this)
                 html += "<div class='details' id='d" + String(i) + "' style='display:none;'>";
 
                 // Larger image preview (optional)
@@ -1322,10 +1375,9 @@ void initWebServer() {
                 html += "</div>";
 
                 html += "</div>"; // details
-                html += "</div>"; // card
             }
 
-            html += "</div>"; // #listView
+            html += "</div>"; // #editStore
 
             // OWNERS & LOCATIONS (collapsible)
             html += "<div class='card'>";

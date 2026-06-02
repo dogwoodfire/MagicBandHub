@@ -132,10 +132,11 @@ static void renderFillStep(uint8_t filledCount, uint8_t r = 0, uint8_t g = 255, 
 // Phase 3: pulse — sinusoidal brightness on a solid green ring.
 static void renderPulse(uint32_t phaseElapsed) {
     // Two full pulses in 1200 ms → period = 600 ms each.
+    // Use cos so the cycle starts AND ends at full-bright, avoiding a flash
+    // at the boundary between pulses. cos(0)=1, dips to 0 at π, back to 1 at 2π.
     const float angle = (float)phaseElapsed / 600.0f * 2.0f * 3.14159f;
-    // sin goes -1..+1; map to brightness 40..255.
-    float s = sinf(angle);
-    uint8_t brightness = (uint8_t)(40.0f + (215.0f * (s * 0.5f + 0.5f)));
+    float c = cosf(angle);  // 1..–1
+    uint8_t brightness = (uint8_t)(40.0f + (215.0f * (c * 0.5f + 0.5f)));
     strip.setBrightness(brightness);
     strip.fill(strip.Color(0, 255, 0));
     strip.show();
@@ -291,7 +292,7 @@ static void updateSuccessAnimation() {
                 g_successAnimationLastFrame = now;
                 const uint32_t pulseElapsed = elapsed - pulseStart;
                 const float angle = (float)pulseElapsed / 600.0f * 2.0f * 3.14159f;
-                float s = sinf(angle);
+                float s = cosf(angle);
                 uint8_t brightness = (uint8_t)(40.0f + (215.0f * (s * 0.5f + 0.5f)));
                 strip.setBrightness(brightness);
                 strip.fill(strip.Color(255, 110, 0));
